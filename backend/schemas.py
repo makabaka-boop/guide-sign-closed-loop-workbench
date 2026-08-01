@@ -69,6 +69,8 @@ class ReviewRecordBase(BaseModel):
     reviewer: str
     conclusion: str
     reason: str = ""
+    summary_meta: str = ""
+    review_digest: str = ""
 
 
 class ReviewRecordResponse(ReviewRecordBase):
@@ -88,6 +90,14 @@ class GuideSignBase(BaseModel):
     responsible_person: str
     status: str = "pending_production"
     remark: str = ""
+    # 批次追踪与位标链路档案
+    trace_code: str = ""
+    scene_scope: str = ""
+    risk_level: str = ""
+    handover_note: str = ""
+    consistency_state: str = ""
+    summary_meta: str = ""
+    flow_digest: str = ""
 
 
 class GuideSignCreate(GuideSignBase):
@@ -100,6 +110,13 @@ class GuideSignUpdate(BaseModel):
     current_area: Optional[str] = None
     responsible_person: Optional[str] = None
     remark: Optional[str] = None
+    trace_code: Optional[str] = None
+    scene_scope: Optional[str] = None
+    risk_level: Optional[str] = None
+    handover_note: Optional[str] = None
+    consistency_state: Optional[str] = None
+    summary_meta: Optional[str] = None
+    flow_digest: Optional[str] = None
 
 
 class GuideSignResponse(GuideSignBase):
@@ -140,6 +157,8 @@ class ReviewRequest(BaseModel):
     reviewer: str
     conclusion: str
     reason: str = ""
+    summary_meta: str = ""
+    review_digest: str = ""
 
 
 class SessionUsageItem(BaseModel):
@@ -182,6 +201,11 @@ class AnomalyBase(BaseModel):
     reporter: str
     responsible_person: str
     description: str = ""
+    # 批次追踪快照字段，登记时可由后端自动从位标带出
+    trace_code: str = ""
+    scene_scope: str = ""
+    risk_level: str = ""
+    handover_note: str = ""
 
 
 class AnomalyCreate(AnomalyBase):
@@ -226,6 +250,18 @@ class AnomalyTypeStatsItem(BaseModel):
     count: int
 
 
+class TraceBatchItem(BaseModel):
+    trace_code: str
+    risk_level: str = ""
+    consistency_state: str = ""
+    sign_count: int = 0
+    issued_count: int = 0
+    pending_recycle_count: int = 0
+    pending_review_count: int = 0
+    active_anomaly_count: int = 0
+    latest_flow_note: str = ""
+
+
 class OverviewStats(BaseModel):
     total_signs: int
     pending_production: int
@@ -245,3 +281,4 @@ class OverviewStats(BaseModel):
     pending_confirm_anomalies: int
     closed_anomalies: int
     recent_anomalies: List[AnomalyResponse]
+    trace_batches: List[TraceBatchItem] = []

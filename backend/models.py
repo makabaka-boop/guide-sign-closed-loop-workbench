@@ -26,6 +26,14 @@ class GuideSign(Base):
     responsible_person = Column(String(100), nullable=False)
     status = Column(String(20), default="pending_production", index=True)
     remark = Column(Text, default="")
+    # 批次追踪与位标链路档案
+    trace_code = Column(String(50), default="", index=True)
+    scene_scope = Column(String(20), default="")
+    risk_level = Column(String(20), default="", index=True)
+    handover_note = Column(Text, default="")
+    consistency_state = Column(String(20), default="")
+    summary_meta = Column(Text, default="")
+    flow_digest = Column(String(200), default="")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -72,6 +80,8 @@ class ReviewRecord(Base):
     reviewer = Column(String(100), nullable=False)
     conclusion = Column(String(20), nullable=False)
     reason = Column(Text, default="")
+    summary_meta = Column(Text, default="")
+    review_digest = Column(Text, default="")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     guide_sign = relationship("GuideSign", back_populates="review_records")
@@ -90,6 +100,11 @@ class Anomaly(Base):
     responsible_person = Column(String(100), nullable=False)
     description = Column(Text, default="")
     final_result = Column(Text, default="")
+    # 批次追踪快照：登记时从位标带出，便于按批次追查同源问题
+    trace_code = Column(String(50), default="", index=True)
+    scene_scope = Column(String(20), default="")
+    risk_level = Column(String(20), default="")
+    handover_note = Column(Text, default="")
     closed_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

@@ -36,6 +36,31 @@ ANOMALY_LEVELS = {
     "critical": "严重"
 }
 
+ANOMALY_TYPE_NAMES = {
+    "lost": "离场缺失",
+    "damaged": "版面破损",
+    "wrong_issue": "座区错配",
+    "overdue": "散场超时未回收",
+    "other": "其他"
+}
+
+ACTION_NAMES = {
+    "register": "偏差登记",
+    "start_process": "开始现场核查",
+    "submit_confirm": "提交复核确认",
+    "confirm_close": "核销闭环",
+    "reject": "退回复查",
+    "reopen": "重新纳入核查",
+    "add_remark": "补充核查说明"
+}
+
+
+def append_flow_digest(sign: GuideSign, segment: str):
+    """在位标链路摘要上追加片段，保持后端单一维护。"""
+    stamp = datetime.now().strftime('%Y-%m-%d %H:%M')
+    entry = f"{stamp} {segment}"
+    sign.flow_digest = f"{sign.flow_digest}；{entry}" if sign.flow_digest else entry
+
 
 @router.get("", response_model=List[AnomalyResponse])
 def list_anomalies(
@@ -46,6 +71,7 @@ def list_anomalies(
     responsible_person: Optional[str] = None,
     reporter: Optional[str] = None,
     keyword: Optional[str] = None,
+    trace_code: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
@@ -69,6 +95,11 @@ def list_anomalies(
         query = query.filter(
             GuideSign.sign_number.contains(keyword) |
             Anomaly.description.contains(keyword)
+        )
+    if trace_code:
+        query = query.filter(
+            Anomaly.trace_code.contains(trace_code) |
+            GuideSign.trace_code.contains(trace_code)
         )
     
     anomalies = query.order_by(Anomaly.created_at.desc()).offset(skip).limit(limit).all()
@@ -99,10 +130,20 @@ def create_anomaly(
     
     anomaly = Anomaly(**anomaly_data.model_dump())
     anomaly.current_status = "pending"
-    
+
     if not anomaly.session and sign.applicable_session:
         anomaly.session = sign.applicable_session
-    
+
+    # 登记时自动带出位标的批次链路快照
+    if not anomaly.trace_code:
+        anomaly.trace_code = sign.trace_code or ""
+    if not anomaly.scene_scope:
+        anomaly.scene_scope = sign.scene_scope or ""
+    if not anomaly.risk_level:
+        anomaly.risk_level = sign.risk_level or ""
+    if not anomaly.handover_note:
+        anomaly.handover_note = sign.handover_note or ""
+
     flow_record = AnomalyFlowRecord(
         action="register",
         operator=anomaly_data.reporter,
@@ -123,6 +164,11 @@ def create_anomaly(
         if sign.status not in ["pending_review", "deactivated"]:
             sign.status = "pending_recycle"
             flow_record.remark += "；导引位标状态已联动变更为待回收核验"
+
+    # 登记偏差：位标链路标记冲突提示（允许继续流转），并写入链路摘要
+    sign.consistency_state = "warn"
+    type_name = ANOMALY_TYPE_NAMES.get(anomaly.anomaly_type, anomaly.anomaly_type)
+    append_flow_digest(sign, f"偏差登记（{type_name}）：{anomaly_data.description or '无描述'}")
     
     db.add(anomaly)
     db.commit()
@@ -241,6 +287,21 @@ def process_anomaly(
         to_status=to_status
     )
     db.add(flow_record)
+
+    # 处理/退回/核销等动作联动位标链路一致性与流转摘要
+    if sign:
+        action_name = ACTION_NAMES.get(action, action)
+        if action in ("reopen", "start_process", "submit_confirm", "reject"):
+            sign.consistency_state = "warn"
+        elif action == "confirm_close":
+            remaining_active = db.query(Anomaly).filter(
+                Anomaly.sign_id == sign.id,
+                Anomaly.id != anomaly.id,
+                Anomaly.current_status.in_(["pending", "processing", "pending_confirm"])
+            ).count()
+            sign.consistency_state = "warn" if remaining_active > 0 else "normal"
+        if action != "add_remark":
+            append_flow_digest(sign, f"{action_name}（偏差#{anomaly.id}）：{request.remark or '无说明'}")
     
     db.commit()
     db.refresh(anomaly)
