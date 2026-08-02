@@ -11,6 +11,7 @@ from schemas import (
     AnomalyCreate, AnomalyUpdate, AnomalyResponse,
     AnomalyProcessRequest, AnomalyFlowRecordResponse
 )
+from routers.sign_router import _build_flow_digest
 
 router = APIRouter(prefix="/api/anomalies", tags=["偏差闭环核销"])
 
@@ -36,6 +37,32 @@ ANOMALY_LEVELS = {
     "critical": "严重"
 }
 
+ACTIVE_ANOMALY_STATUSES = ("pending", "processing", "pending_confirm")
+
+
+def _sync_trace_consistency(sign: GuideSign, db: Session):
+    if not sign:
+        return
+    trace_code = (sign.trace_code or "").strip()
+    affected_signs = [sign]
+    if trace_code:
+        affected_signs = db.query(GuideSign).filter(
+            GuideSign.trace_code == trace_code
+        ).all()
+
+    active_sign_ids = [s.id for s in affected_signs]
+    active_count = 0
+    if active_sign_ids:
+        active_count = db.query(func.count(Anomaly.id)).filter(
+            Anomaly.sign_id.in_(active_sign_ids),
+            Anomaly.current_status.in_(ACTIVE_ANOMALY_STATUSES)
+        ).scalar() or 0
+
+    new_state = "warn" if active_count > 0 else "ok"
+    for affected in affected_signs:
+        affected.consistency_state = new_state
+        affected.flow_digest = _build_flow_digest(affected, db)
+
 
 @router.get("", response_model=List[AnomalyResponse])
 def list_anomalies(
@@ -45,6 +72,7 @@ def list_anomalies(
     session: Optional[str] = None,
     responsible_person: Optional[str] = None,
     reporter: Optional[str] = None,
+    trace_code: Optional[str] = None,
     keyword: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
@@ -52,7 +80,7 @@ def list_anomalies(
     current_user: User = Depends(get_current_user)
 ):
     query = db.query(Anomaly).join(GuideSign)
-    
+
     if current_status:
         query = query.filter(Anomaly.current_status == current_status)
     if anomaly_type:
@@ -65,12 +93,17 @@ def list_anomalies(
         query = query.filter(Anomaly.responsible_person.contains(responsible_person))
     if reporter:
         query = query.filter(Anomaly.reporter.contains(reporter))
+    if trace_code:
+        query = query.filter(
+            (Anomaly.trace_code.contains(trace_code)) |
+            (GuideSign.trace_code.contains(trace_code))
+        )
     if keyword:
         query = query.filter(
             GuideSign.sign_number.contains(keyword) |
             Anomaly.description.contains(keyword)
         )
-    
+
     anomalies = query.order_by(Anomaly.created_at.desc()).offset(skip).limit(limit).all()
     return anomalies
 
@@ -96,13 +129,19 @@ def create_anomaly(
     sign = db.query(GuideSign).filter(GuideSign.id == anomaly_data.sign_id).first()
     if not sign:
         raise HTTPException(status_code=404, detail="导引位标不存在")
-    
-    anomaly = Anomaly(**anomaly_data.model_dump())
+
+    payload = anomaly_data.model_dump()
+    payload["trace_code"] = (payload.get("trace_code") or sign.trace_code or "").strip()
+    payload["scene_scope"] = payload.get("scene_scope") or sign.scene_scope or "private"
+    payload["risk_level"] = payload.get("risk_level") or sign.risk_level or "green"
+    payload["handover_note"] = payload.get("handover_note") or sign.handover_note or ""
+
+    anomaly = Anomaly(**payload)
     anomaly.current_status = "pending"
-    
+
     if not anomaly.session and sign.applicable_session:
         anomaly.session = sign.applicable_session
-    
+
     flow_record = AnomalyFlowRecord(
         action="register",
         operator=anomaly_data.reporter,
@@ -111,7 +150,7 @@ def create_anomaly(
         to_status="pending"
     )
     anomaly.flow_records.append(flow_record)
-    
+
     sign._original_status = sign.status
     if anomaly_data.anomaly_type == "lost":
         sign.status = "deactivated"
@@ -123,8 +162,12 @@ def create_anomaly(
         if sign.status not in ["pending_review", "deactivated"]:
             sign.status = "pending_recycle"
             flow_record.remark += "；导引位标状态已联动变更为待回收核验"
-    
+
     db.add(anomaly)
+    db.flush()
+
+    _sync_trace_consistency(sign, db)
+
     db.commit()
     db.refresh(anomaly)
     return anomaly
@@ -231,7 +274,7 @@ def process_anomaly(
     
     if to_status and to_status != from_status:
         anomaly.current_status = to_status
-    
+
     flow_record = AnomalyFlowRecord(
         anomaly_id=anomaly.id,
         action=action,
@@ -241,7 +284,11 @@ def process_anomaly(
         to_status=to_status
     )
     db.add(flow_record)
-    
+    db.flush()
+
+    if sign:
+        _sync_trace_consistency(sign, db)
+
     db.commit()
     db.refresh(anomaly)
     return anomaly
