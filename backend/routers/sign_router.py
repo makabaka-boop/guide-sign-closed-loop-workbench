@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
+from datetime import datetime
 
 from database import get_db
 from models import GuideSign, PositionRecord, IssueRecord, ReviewRecord, User, Anomaly
@@ -43,6 +44,10 @@ def list_signs(
     batch_code: Optional[str] = None,
     applicable_session: Optional[str] = None,
     responsible_person: Optional[str] = None,
+    trace_code: Optional[str] = None,
+    scene_scope: Optional[str] = None,
+    risk_level: Optional[str] = None,
+    consistency_state: Optional[str] = None,
     keyword: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
@@ -59,6 +64,14 @@ def list_signs(
         query = query.filter(GuideSign.applicable_session.contains(applicable_session))
     if responsible_person:
         query = query.filter(GuideSign.responsible_person.contains(responsible_person))
+    if trace_code:
+        query = query.filter(GuideSign.trace_code.contains(trace_code))
+    if scene_scope:
+        query = query.filter(GuideSign.scene_scope == scene_scope)
+    if risk_level:
+        query = query.filter(GuideSign.risk_level == risk_level)
+    if consistency_state:
+        query = query.filter(GuideSign.consistency_state == consistency_state)
     if keyword:
         query = query.filter(
             GuideSign.sign_number.contains(keyword) |
@@ -182,17 +195,38 @@ def issue_sign(
     
     sign.status = "issued"
     
+    # 投放记录摘要：并入批次交接备注，避免前端另行拼接历史文本
+    remark_parts = []
+    if request.remark:
+        remark_parts.append(request.remark.strip())
+    if sign.handover_note:
+        remark_parts.append(f"交接备注：{sign.handover_note.strip()}")
+    issue_remark = " | ".join(remark_parts)
+    
     issue_record = IssueRecord(
         sign_id=sign.id,
         issue_type="issue",
         session=request.session,
         operator=request.operator,
         receiver=request.receiver,
-        remark=request.remark
+        remark=issue_remark
     )
     db.add(issue_record)
+    
+    # 返回前刷新流转摘要，前端直接展示无需拼接
+    issued_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+    digest_parts = [
+        f"{issued_at} 投放至{request.session or '未指定班次'}",
+        f"接场人{request.receiver or '-'}",
+        f"执行人{request.operator or '-'}",
+    ]
+    if sign.handover_note:
+        digest_parts.append(f"交接备注：{sign.handover_note.strip()}")
+    sign.flow_digest = " | ".join(digest_parts)
+    
     db.commit()
     db.refresh(sign)
+    enrich_sign_with_anomaly(sign, db)
     return sign
 
 
@@ -290,7 +324,9 @@ def review_sign(
         sign_id=sign.id,
         reviewer=request.reviewer,
         conclusion=request.conclusion,
-        reason=request.reason
+        reason=request.reason,
+        summary_meta=request.summary_meta,
+        review_digest=request.review_digest
     )
     db.add(review_record)
     
@@ -303,8 +339,17 @@ def review_sign(
     else:
         raise HTTPException(status_code=400, detail="无效的复核判定")
     
+    # 复核链路摘要回写位标：优先记录复核摘要，附带判定结论与复核员
+    conclusion_label = {"restore": "复核后可投放", "deactivate": "隔离停用", "reissue": "重新投放"}.get(request.conclusion, request.conclusion)
+    reviewed_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+    digest_body = (request.review_digest or request.summary_meta or "").strip()
+    sign.flow_digest = f"{reviewed_at} 防错复核-{conclusion_label} | 复核员{request.reviewer}" + (f" | {digest_body}" if digest_body else "")
+    if request.summary_meta:
+        sign.summary_meta = request.summary_meta
+    
     db.commit()
     db.refresh(sign)
+    enrich_sign_with_anomaly(sign, db)
     return sign
 
 

@@ -139,6 +139,90 @@
     </el-row>
 
     <el-row :gutter="16" class="charts-row">
+      <el-col :span="24">
+        <el-card class="chart-card trace-batch-card">
+          <template #header>
+            <div class="card-title">
+              <span>批次追踪概览</span>
+              <el-tag type="warning" size="small">{{ (stats.trace_batches || []).length }} 组批次链路</el-tag>
+            </div>
+          </template>
+
+          <div v-if="(stats.trace_batches || []).length" class="trace-batch-cards">
+            <div
+              v-for="batch in stats.trace_batches"
+              :key="batch.trace_code"
+              class="trace-batch-item"
+              :class="{ 'is-risky': batch.risk_level === 'yellow' || batch.risk_level === 'red' || batch.consistency_state === 'warn' }"
+              @click="goToSignsByTrace(batch.trace_code)"
+            >
+              <div class="trace-batch-head">
+                <span class="trace-code">{{ batch.trace_code }}</span>
+                <div class="trace-tags">
+                  <el-tag :type="getSceneScopeType(batch.scene_scope)" size="small">{{ getSceneScopeLabel(batch.scene_scope) }}</el-tag>
+                  <el-tag :type="getRiskLevelType(batch.risk_level)" size="small">{{ getRiskLevelLabel(batch.risk_level) }}</el-tag>
+                  <el-tag :type="getConsistencyStateType(batch.consistency_state)" size="small">{{ getConsistencyStateLabel(batch.consistency_state) }}</el-tag>
+                </div>
+              </div>
+              <div class="trace-batch-metrics">
+                <div class="metric"><span class="metric-label">同组位标</span><span class="metric-value">{{ batch.total_count }}</span></div>
+                <div class="metric"><span class="metric-label">已投放</span><span class="metric-value">{{ batch.issued_count }}</span></div>
+                <div class="metric"><span class="metric-label">待回收</span><span class="metric-value">{{ batch.pending_recycle_count }}</span></div>
+                <div class="metric"><span class="metric-label">待复核</span><span class="metric-value">{{ batch.pending_review_count }}</span></div>
+                <div class="metric"><span class="metric-label">未闭环偏差</span><span class="metric-value" :class="{ 'is-alert': batch.open_anomaly_count > 0 }">{{ batch.open_anomaly_count }}</span></div>
+              </div>
+              <div class="trace-batch-note">
+                <el-icon><ChatLineSquare /></el-icon>
+                <span>{{ batch.latest_flow_note || '暂无流转说明' }}</span>
+              </div>
+            </div>
+          </div>
+          <el-empty v-else description="暂无批次追踪链路" :image-size="80" />
+
+          <el-table
+            v-if="(stats.trace_batches || []).length"
+            :data="stats.trace_batches"
+            size="small"
+            v-loading="loading"
+            class="trace-batch-table"
+          >
+            <el-table-column prop="trace_code" label="追踪码" width="140" />
+            <el-table-column label="使用场景" width="120">
+              <template #default="{ row }">
+                <el-tag :type="getSceneScopeType(row.scene_scope)" size="small">{{ getSceneScopeLabel(row.scene_scope) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="风险等级" width="110">
+              <template #default="{ row }">
+                <el-tag :type="getRiskLevelType(row.risk_level)" size="small">{{ getRiskLevelLabel(row.risk_level) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="一致性" width="120">
+              <template #default="{ row }">
+                <el-tag :type="getConsistencyStateType(row.consistency_state)" size="small">{{ getConsistencyStateLabel(row.consistency_state) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="total_count" label="同组位标" width="90" />
+            <el-table-column prop="issued_count" label="已投放" width="80" />
+            <el-table-column prop="pending_recycle_count" label="待回收" width="80" />
+            <el-table-column prop="pending_review_count" label="待复核" width="80" />
+            <el-table-column prop="open_anomaly_count" label="未闭环偏差" width="100">
+              <template #default="{ row }">
+                <span :class="{ 'is-alert': row.open_anomaly_count > 0 }">{{ row.open_anomaly_count }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="latest_flow_note" label="最近一次流转说明" min-width="180" show-overflow-tooltip />
+            <el-table-column label="操作" width="110" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="goToSignsByTrace(row.trace_code)">查看位标</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="16" class="charts-row">
       <el-col :span="12">
         <el-card class="chart-card">
           <template #header>
@@ -261,13 +345,16 @@ import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { 
   Tickets, Clock, CircleCheck, Promotion, Refresh, Warning, Close,
-  Loading, QuestionFilled, DocumentChecked
+  Loading, QuestionFilled, DocumentChecked, ChatLineSquare
 } from '@element-plus/icons-vue'
 import request from '@/utils/request'
 import {
   getAnomalyStatusLabel, getAnomalyStatusType,
   getAnomalyTypeLabel, getAnomalyTypeType,
-  getAnomalyLevelLabel, getAnomalyLevelType
+  getAnomalyLevelLabel, getAnomalyLevelType,
+  getSceneScopeLabel, getSceneScopeType,
+  getRiskLevelLabel, getRiskLevelType,
+  getConsistencyStateLabel, getConsistencyStateType
 } from '@/utils/statusMap'
 
 const router = useRouter()
@@ -487,6 +574,10 @@ function goToAnomalyDetail(row) {
   router.push({ path: '/anomaly', query: { anomaly_id: row.id } })
 }
 
+function goToSignsByTrace(traceCode) {
+  router.push({ path: '/signs', query: { trace_code: traceCode } })
+}
+
 function handleResize() {
   sessionChart?.resize()
   areaChart?.resize()
@@ -645,4 +736,102 @@ onBeforeUnmount(() => {
   max-height: 300px;
   overflow-y: auto;
 }
+
+.trace-batch-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.trace-batch-item {
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  padding: 14px;
+  cursor: pointer;
+  transition: box-shadow 0.2s, border-color 0.2s;
+  background: #fff;
+}
+
+.trace-batch-item:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.trace-batch-item.is-risky {
+  border-color: #e6a23c;
+  background: #fdf6ec;
+}
+
+.trace-batch-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.trace-code {
+  font-weight: 600;
+  font-size: 15px;
+  color: #303133;
+}
+
+.trace-tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.trace-batch-metrics {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.trace-batch-metrics .metric {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+}
+
+.metric-label {
+  font-size: 12px;
+  color: #909399;
+}
+
+.metric-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.metric-value.is-alert,
+.is-alert {
+  color: #f56c6c;
+}
+
+.trace-batch-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #606266;
+  border-top: 1px dashed #ebeef5;
+  padding-top: 10px;
+}
+
+.trace-batch-note span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace-batch-table {
+  margin-top: 8px;
+}
+
 </style>

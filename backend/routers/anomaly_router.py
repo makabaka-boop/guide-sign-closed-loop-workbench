@@ -33,8 +33,38 @@ ANOMALY_LEVELS = {
     "low": "低",
     "normal": "一般",
     "high": "高",
-    "critical": "严重"
+    "critical": "严重",
 }
+
+OPEN_ANOMALY_STATUSES = ["pending", "processing", "pending_confirm"]
+
+# 核查动作对应的流转摘要短语
+ANOMALY_ACTION_NOTE = {
+    "start_process": "进入现场核查",
+    "submit_confirm": "提交复核确认",
+    "confirm_close": "核销闭环",
+    "reject": "退回复查",
+    "reopen": "重新纳入核查",
+}
+
+
+def refresh_sign_consistency(sign: GuideSign, db: Session):
+    """按位标是否仍有未闭环偏差刷新 consistency_state：有活跃偏差置 warn，否则恢复 normal。"""
+    if not sign:
+        return
+    active_count = db.query(Anomaly).filter(
+        Anomaly.sign_id == sign.id,
+        Anomaly.current_status.in_(OPEN_ANOMALY_STATUSES)
+    ).count()
+    sign.consistency_state = "warn" if active_count > 0 else "normal"
+
+
+def update_sign_flow_digest(sign: GuideSign, note: str):
+    """刷新位标流转摘要，前端直接展示无需拼接历史文本。"""
+    if not sign:
+        return
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    sign.flow_digest = f"{stamp} {note}"
 
 
 @router.get("", response_model=List[AnomalyResponse])
@@ -45,6 +75,7 @@ def list_anomalies(
     session: Optional[str] = None,
     responsible_person: Optional[str] = None,
     reporter: Optional[str] = None,
+    trace_code: Optional[str] = None,
     keyword: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
@@ -65,6 +96,12 @@ def list_anomalies(
         query = query.filter(Anomaly.responsible_person.contains(responsible_person))
     if reporter:
         query = query.filter(Anomaly.reporter.contains(reporter))
+    if trace_code:
+        # 兼容偏差快照列与关联位标列，便于按批次追查同源问题
+        query = query.filter(
+            Anomaly.trace_code.contains(trace_code) |
+            GuideSign.trace_code.contains(trace_code)
+        )
     if keyword:
         query = query.filter(
             GuideSign.sign_number.contains(keyword) |
@@ -103,6 +140,12 @@ def create_anomaly(
     if not anomaly.session and sign.applicable_session:
         anomaly.session = sign.applicable_session
     
+    # 登记时从位标带出批次追踪快照，便于后续按批次追查同源问题
+    anomaly.trace_code = sign.trace_code or ""
+    anomaly.scene_scope = sign.scene_scope or "exclusive"
+    anomaly.risk_level = sign.risk_level or "none"
+    anomaly.handover_note = sign.handover_note or ""
+    
     flow_record = AnomalyFlowRecord(
         action="register",
         operator=anomaly_data.reporter,
@@ -123,6 +166,10 @@ def create_anomaly(
         if sign.status not in ["pending_review", "deactivated"]:
             sign.status = "pending_recycle"
             flow_record.remark += "；导引位标状态已联动变更为待回收核验"
+    
+    # 新增未闭环偏差，位标一致性置为冲突提示并刷新流转摘要
+    sign.consistency_state = "warn"
+    update_sign_flow_digest(sign, f"登记{ANOMALY_TYPES.get(anomaly_data.anomaly_type, '偏差')}，进入现场核查")
     
     db.add(anomaly)
     db.commit()
@@ -241,6 +288,13 @@ def process_anomaly(
         to_status=to_status
     )
     db.add(flow_record)
+    
+    # 联动刷新位标一致性与流转摘要（add_remark 仅补充说明，不更新流转摘要）
+    if sign and action != "add_remark":
+        db.flush()
+        refresh_sign_consistency(sign, db)
+        note = ANOMALY_ACTION_NOTE.get(action, "流转")
+        update_sign_flow_digest(sign, f"偏差{ANOMALY_TYPES.get(anomaly.anomaly_type, '')}{note}")
     
     db.commit()
     db.refresh(anomaly)
