@@ -45,6 +45,7 @@ def list_anomalies(
     session: Optional[str] = None,
     responsible_person: Optional[str] = None,
     reporter: Optional[str] = None,
+    trace_code: Optional[str] = None,
     keyword: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
@@ -65,6 +66,8 @@ def list_anomalies(
         query = query.filter(Anomaly.responsible_person.contains(responsible_person))
     if reporter:
         query = query.filter(Anomaly.reporter.contains(reporter))
+    if trace_code:
+        query = query.filter(Anomaly.trace_code.contains(trace_code))
     if keyword:
         query = query.filter(
             GuideSign.sign_number.contains(keyword) |
@@ -87,6 +90,34 @@ def get_anomaly(
     return anomaly
 
 
+def _sync_sign_trace_state(sign: GuideSign, db: Session):
+    if not sign.trace_code:
+        sign.consistency_state = "ok"
+        sign.flow_digest = ""
+        return
+    active_count = db.query(Anomaly).filter(
+        Anomaly.sign_id == sign.id,
+        Anomaly.current_status.in_(["pending", "processing", "pending_confirm"])
+    ).count()
+    if active_count > 0:
+        sign.consistency_state = "warn"
+        latest_anomaly = db.query(Anomaly).filter(
+            Anomaly.sign_id == sign.id,
+            Anomaly.current_status.in_(["pending", "processing", "pending_confirm"])
+        ).order_by(Anomaly.created_at.desc()).first()
+        if latest_anomaly:
+            type_label = ANOMALY_TYPES.get(latest_anomaly.anomaly_type, latest_anomaly.anomaly_type)
+            sign.flow_digest = f"偏差处置中：{type_label}（{latest_anomaly.current_status}）"
+    else:
+        sign.consistency_state = "ok"
+        if sign.status == "issued":
+            sign.flow_digest = "已投放，链路正常"
+        elif sign.status == "available":
+            sign.flow_digest = "待投放，链路正常"
+        else:
+            sign.flow_digest = ""
+
+
 @router.post("", response_model=AnomalyResponse)
 def create_anomaly(
     anomaly_data: AnomalyCreate,
@@ -97,7 +128,13 @@ def create_anomaly(
     if not sign:
         raise HTTPException(status_code=404, detail="导引位标不存在")
     
-    anomaly = Anomaly(**anomaly_data.model_dump())
+    data = anomaly_data.model_dump()
+    data["trace_code"] = sign.trace_code or ""
+    data["scene_scope"] = sign.scene_scope or "exclusive"
+    data["risk_level"] = sign.risk_level or "normal"
+    data["handover_note"] = sign.handover_note or ""
+    
+    anomaly = Anomaly(**data)
     anomaly.current_status = "pending"
     
     if not anomaly.session and sign.applicable_session:
@@ -123,6 +160,8 @@ def create_anomaly(
         if sign.status not in ["pending_review", "deactivated"]:
             sign.status = "pending_recycle"
             flow_record.remark += "；导引位标状态已联动变更为待回收核验"
+    
+    _sync_sign_trace_state(sign, db)
     
     db.add(anomaly)
     db.commit()
@@ -241,6 +280,9 @@ def process_anomaly(
         to_status=to_status
     )
     db.add(flow_record)
+    
+    if sign:
+        _sync_sign_trace_state(sign, db)
     
     db.commit()
     db.refresh(anomaly)

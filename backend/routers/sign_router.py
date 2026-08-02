@@ -8,7 +8,8 @@ from models import GuideSign, PositionRecord, IssueRecord, ReviewRecord, User, A
 from auth import get_current_user
 from schemas import (
     GuideSignCreate, GuideSignUpdate, GuideSignResponse,
-    IssueSignRequest, RecycleSignRequest, PositionAdjustRequest, ReviewRequest
+    IssueSignRequest, RecycleSignRequest, PositionAdjustRequest, ReviewRequest,
+    ReviewContextResponse, SameBatchSignItem, ReviewPositionItem, ReviewIssueItem, ReviewAnomalyItem
 )
 
 router = APIRouter(prefix="/api/signs", tags=["导引位标"])
@@ -44,6 +45,10 @@ def list_signs(
     applicable_session: Optional[str] = None,
     responsible_person: Optional[str] = None,
     keyword: Optional[str] = None,
+    trace_code: Optional[str] = None,
+    scene_scope: Optional[str] = None,
+    risk_level: Optional[str] = None,
+    consistency_state: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
@@ -64,6 +69,14 @@ def list_signs(
             GuideSign.sign_number.contains(keyword) |
             GuideSign.current_area.contains(keyword)
         )
+    if trace_code:
+        query = query.filter(GuideSign.trace_code.contains(trace_code))
+    if scene_scope:
+        query = query.filter(GuideSign.scene_scope == scene_scope)
+    if risk_level:
+        query = query.filter(GuideSign.risk_level == risk_level)
+    if consistency_state:
+        query = query.filter(GuideSign.consistency_state == consistency_state)
     
     signs = query.order_by(GuideSign.id.desc()).offset(skip).limit(limit).all()
     for sign in signs:
@@ -182,15 +195,30 @@ def issue_sign(
     
     sign.status = "issued"
     
+    remark_parts = []
+    if sign.handover_note:
+        remark_parts.append(f"交接备注：{sign.handover_note}")
+    if request.remark:
+        remark_parts.append(request.remark)
+    combined_remark = "；".join(remark_parts)
+    
     issue_record = IssueRecord(
         sign_id=sign.id,
         issue_type="issue",
         session=request.session,
         operator=request.operator,
         receiver=request.receiver,
-        remark=request.remark
+        remark=combined_remark
     )
     db.add(issue_record)
+    
+    digest_parts = [f"投放至「{request.session}」", f"执行人{request.operator}"]
+    if request.receiver:
+        digest_parts.append(f"接场人{request.receiver}")
+    if sign.handover_note:
+        digest_parts.append(f"交接：{sign.handover_note}")
+    sign.flow_digest = "｜".join(digest_parts)
+    
     db.commit()
     db.refresh(sign)
     return sign
@@ -273,6 +301,57 @@ def adjust_position(
     return sign
 
 
+@router.get("/{sign_id}/review-context", response_model=ReviewContextResponse)
+def get_review_context(
+    sign_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    sign = db.query(GuideSign).filter(GuideSign.id == sign_id).first()
+    if not sign:
+        raise HTTPException(status_code=404, detail="导引位标不存在")
+    enrich_sign_with_anomaly(sign, db)
+
+    same_batch_signs = []
+    if sign.trace_code:
+        batch_signs = db.query(GuideSign).filter(
+            GuideSign.trace_code == sign.trace_code,
+            GuideSign.id != sign.id
+        ).all()
+        for bs in batch_signs:
+            enrich_sign_with_anomaly(bs, db)
+            same_batch_signs.append(SameBatchSignItem(
+                id=bs.id,
+                sign_number=bs.sign_number,
+                status=bs.status,
+                current_area=bs.current_area,
+                trace_code=bs.trace_code or "",
+                risk_level=bs.risk_level or "normal",
+                consistency_state=bs.consistency_state or "ok",
+                has_active_anomaly=getattr(bs, 'has_active_anomaly', False)
+            ))
+
+    latest_position = db.query(PositionRecord).filter(
+        PositionRecord.sign_id == sign_id
+    ).order_by(PositionRecord.created_at.desc()).first()
+
+    issue_records = db.query(IssueRecord).filter(
+        IssueRecord.sign_id == sign_id
+    ).order_by(IssueRecord.created_at.desc()).limit(10).all()
+
+    related_anomalies = db.query(Anomaly).filter(
+        Anomaly.sign_id == sign_id
+    ).order_by(Anomaly.created_at.desc()).all()
+
+    return ReviewContextResponse(
+        sign=sign,
+        same_batch_signs=same_batch_signs,
+        latest_position=latest_position,
+        issue_records=issue_records,
+        related_anomalies=related_anomalies
+    )
+
+
 @router.post("/{sign_id}/review", response_model=GuideSignResponse)
 def review_sign(
     sign_id: int,
@@ -290,7 +369,9 @@ def review_sign(
         sign_id=sign.id,
         reviewer=request.reviewer,
         conclusion=request.conclusion,
-        reason=request.reason
+        reason=request.reason,
+        summary_meta=request.summary_meta,
+        review_digest=request.review_digest
     )
     db.add(review_record)
     
@@ -302,6 +383,21 @@ def review_sign(
         sign.status = "available"
     else:
         raise HTTPException(status_code=400, detail="无效的复核判定")
+    
+    if request.summary_meta:
+        sign.summary_meta = request.summary_meta
+    
+    conclusion_label = {
+        "restore": "复核后可投放",
+        "deactivate": "隔离停用",
+        "reissue": "重新投放"
+    }.get(request.conclusion, request.conclusion)
+    digest_parts = [f"复核：{conclusion_label}", f"复核员{request.reviewer}"]
+    if request.review_digest:
+        digest_parts.append(request.review_digest)
+    elif request.reason:
+        digest_parts.append(request.reason)
+    sign.flow_digest = "｜".join(digest_parts)
     
     db.commit()
     db.refresh(sign)

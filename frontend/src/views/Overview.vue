@@ -138,6 +138,101 @@
       </el-col>
     </el-row>
 
+    <el-row :gutter="16" class="charts-row" v-if="(stats.trace_batches || []).length > 0">
+      <el-col :span="24">
+        <el-card class="chart-card">
+          <template #header>
+            <div class="card-title">
+              <span>
+                <el-icon style="vertical-align: middle; margin-right: 4px"><Connection /></el-icon>
+                批次追踪概览
+              </span>
+              <el-tag type="info" size="small">{{ (stats.trace_batches || []).length }} 个追踪批次</el-tag>
+            </div>
+          </template>
+          <div class="batch-cards">
+            <div
+              v-for="batch in stats.trace_batches"
+              :key="batch.trace_code"
+              class="batch-card"
+              :class="{ 'batch-risk-red': batch.risk_level === 'red', 'batch-risk-yellow': batch.risk_level === 'yellow', 'batch-conflict': batch.consistency_state === 'warn' }"
+              @click="goToSignsWithTrace(batch.trace_code)"
+            >
+              <div class="batch-card-header">
+                <span class="batch-trace-code" :title="batch.trace_code">{{ batch.trace_code }}</span>
+                <div class="batch-tags">
+                  <el-tag :type="getRiskLevelType(batch.risk_level)" size="small" effect="dark">{{ getRiskLevelLabel(batch.risk_level) }}</el-tag>
+                  <el-tag v-if="batch.consistency_state === 'warn'" type="warning" size="small" effect="plain">冲突提示</el-tag>
+                </div>
+              </div>
+              <div class="batch-card-stats">
+                <div class="batch-stat-item">
+                  <span class="batch-stat-value">{{ batch.sign_count }}</span>
+                  <span class="batch-stat-label">位标数</span>
+                </div>
+                <div class="batch-stat-item">
+                  <span class="batch-stat-value issued">{{ batch.issued_count }}</span>
+                  <span class="batch-stat-label">已投放</span>
+                </div>
+                <div class="batch-stat-item">
+                  <span class="batch-stat-value recycle">{{ batch.pending_recycle_count }}</span>
+                  <span class="batch-stat-label">待回收</span>
+                </div>
+                <div class="batch-stat-item">
+                  <span class="batch-stat-value review">{{ batch.pending_review_count }}</span>
+                  <span class="batch-stat-label">待复核</span>
+                </div>
+                <div class="batch-stat-item">
+                  <span class="batch-stat-value" :class="{ anomaly: batch.active_anomaly_count > 0 }">{{ batch.active_anomaly_count }}</span>
+                  <span class="batch-stat-label">未闭环偏差</span>
+                </div>
+              </div>
+              <div class="batch-card-footer" v-if="batch.latest_flow_note">
+                <el-icon><InfoFilled /></el-icon>
+                <span>{{ batch.latest_flow_note }}</span>
+              </div>
+              <div class="batch-card-footer text-muted" v-else>
+                <span>暂无流转记录</span>
+              </div>
+            </div>
+          </div>
+          <el-table :data="stats.trace_batches || []" size="small" style="margin-top: 16px" v-loading="loading">
+            <el-table-column prop="trace_code" label="追踪码" width="180" show-overflow-tooltip />
+            <el-table-column label="风险等级" width="110">
+              <template #default="{ row }">
+                <el-tag :type="getRiskLevelType(row.risk_level)" size="small" effect="dark">{{ getRiskLevelLabel(row.risk_level) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="一致性" width="100">
+              <template #default="{ row }">
+                <el-tag :type="getConsistencyStateType(row.consistency_state)" size="small">{{ getConsistencyStateLabel(row.consistency_state) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="sign_count" label="位标数" width="80" align="center" />
+            <el-table-column prop="issued_count" label="已投放" width="80" align="center" />
+            <el-table-column prop="pending_recycle_count" label="待回收" width="80" align="center" />
+            <el-table-column prop="pending_review_count" label="待复核" width="80" align="center" />
+            <el-table-column label="未闭环偏差" width="100" align="center">
+              <template #default="{ row }">
+                <span :class="{ 'text-danger': row.active_anomaly_count > 0, 'fw-600': row.active_anomaly_count > 0 }">{{ row.active_anomaly_count }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="latest_flow_note" label="最近一次流转说明" min-width="200" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span v-if="row.latest_flow_note">{{ row.latest_flow_note }}</span>
+                <span v-else class="text-muted">-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="120" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="goToSignsWithTrace(row.trace_code)">查看位标</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+      </el-col>
+    </el-row>
+
     <el-row :gutter="16" class="charts-row">
       <el-col :span="12">
         <el-card class="chart-card">
@@ -261,13 +356,15 @@ import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { 
   Tickets, Clock, CircleCheck, Promotion, Refresh, Warning, Close,
-  Loading, QuestionFilled, DocumentChecked
+  Loading, QuestionFilled, DocumentChecked, Connection, InfoFilled
 } from '@element-plus/icons-vue'
 import request from '@/utils/request'
 import {
   getAnomalyStatusLabel, getAnomalyStatusType,
   getAnomalyTypeLabel, getAnomalyTypeType,
-  getAnomalyLevelLabel, getAnomalyLevelType
+  getAnomalyLevelLabel, getAnomalyLevelType,
+  getRiskLevelLabel, getRiskLevelType,
+  getConsistencyStateLabel, getConsistencyStateType
 } from '@/utils/statusMap'
 
 const router = useRouter()
@@ -487,6 +584,10 @@ function goToAnomalyDetail(row) {
   router.push({ path: '/anomaly', query: { anomaly_id: row.id } })
 }
 
+function goToSignsWithTrace(traceCode) {
+  router.push({ path: '/signs', query: { trace_code: traceCode } })
+}
+
 function handleResize() {
   sessionChart?.resize()
   areaChart?.resize()
@@ -644,5 +745,127 @@ onBeforeUnmount(() => {
 .anomaly-list {
   max-height: 300px;
   overflow-y: auto;
+}
+
+.batch-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.batch-card {
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  padding: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: #fff;
+}
+
+.batch-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
+}
+
+.batch-card.batch-risk-red {
+  border-left: 4px solid #f56c6c;
+}
+
+.batch-card.batch-risk-yellow {
+  border-left: 4px solid #e6a23c;
+}
+
+.batch-card.batch-conflict {
+  background: #fdf6ec;
+}
+
+.batch-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.batch-trace-code {
+  font-weight: 600;
+  font-size: 14px;
+  color: #303133;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 8px;
+}
+
+.batch-tags {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.batch-card-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.batch-stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+}
+
+.batch-stat-value {
+  font-size: 20px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.batch-stat-value.issued {
+  color: #e6a23c;
+}
+
+.batch-stat-value.recycle {
+  color: #409eff;
+}
+
+.batch-stat-value.review {
+  color: #f56c6c;
+}
+
+.batch-stat-value.anomaly {
+  color: #f56c6c;
+}
+
+.batch-stat-label {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 2px;
+}
+
+.batch-card-footer {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed #ebeef5;
+  font-size: 12px;
+  color: #606266;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text-muted {
+  color: #c0c4cc;
+}
+
+.text-danger {
+  color: #f56c6c;
+}
+
+.fw-600 {
+  font-weight: 600;
 }
 </style>

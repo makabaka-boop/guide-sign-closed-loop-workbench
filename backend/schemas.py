@@ -69,6 +69,8 @@ class ReviewRecordBase(BaseModel):
     reviewer: str
     conclusion: str
     reason: str = ""
+    summary_meta: str = ""
+    review_digest: str = ""
 
 
 class ReviewRecordResponse(ReviewRecordBase):
@@ -88,6 +90,13 @@ class GuideSignBase(BaseModel):
     responsible_person: str
     status: str = "pending_production"
     remark: str = ""
+    trace_code: str = ""
+    scene_scope: str = "exclusive"
+    risk_level: str = "normal"
+    handover_note: str = ""
+    consistency_state: str = "ok"
+    summary_meta: str = ""
+    flow_digest: str = ""
 
 
 class GuideSignCreate(GuideSignBase):
@@ -100,6 +109,13 @@ class GuideSignUpdate(BaseModel):
     current_area: Optional[str] = None
     responsible_person: Optional[str] = None
     remark: Optional[str] = None
+    trace_code: Optional[str] = None
+    scene_scope: Optional[str] = None
+    risk_level: Optional[str] = None
+    handover_note: Optional[str] = None
+    consistency_state: Optional[str] = None
+    summary_meta: Optional[str] = None
+    flow_digest: Optional[str] = None
 
 
 class GuideSignResponse(GuideSignBase):
@@ -140,6 +156,63 @@ class ReviewRequest(BaseModel):
     reviewer: str
     conclusion: str
     reason: str = ""
+    summary_meta: str = ""
+    review_digest: str = ""
+
+
+class SameBatchSignItem(BaseModel):
+    id: int
+    sign_number: str
+    status: str
+    current_area: str
+    trace_code: str = ""
+    risk_level: str = "normal"
+    consistency_state: str = "ok"
+    has_active_anomaly: bool = False
+
+
+class ReviewPositionItem(BaseModel):
+    from_area: str
+    to_area: str
+    operator: str
+    reason: str = ""
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ReviewIssueItem(BaseModel):
+    issue_type: str
+    session: Optional[str] = None
+    operator: str
+    receiver: Optional[str] = None
+    remark: str = ""
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ReviewAnomalyItem(BaseModel):
+    id: int
+    anomaly_type: str
+    anomaly_level: str = "normal"
+    current_status: str
+    description: str = ""
+    final_result: str = ""
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ReviewContextResponse(BaseModel):
+    sign: GuideSignResponse
+    same_batch_signs: List[SameBatchSignItem] = []
+    latest_position: Optional[ReviewPositionItem] = None
+    issue_records: List[ReviewIssueItem] = []
+    related_anomalies: List[ReviewAnomalyItem] = []
 
 
 class SessionUsageItem(BaseModel):
@@ -182,6 +255,10 @@ class AnomalyBase(BaseModel):
     reporter: str
     responsible_person: str
     description: str = ""
+    trace_code: str = ""
+    scene_scope: str = "exclusive"
+    risk_level: str = "normal"
+    handover_note: str = ""
 
 
 class AnomalyCreate(AnomalyBase):
@@ -226,6 +303,18 @@ class AnomalyTypeStatsItem(BaseModel):
     count: int
 
 
+class TraceBatchItem(BaseModel):
+    trace_code: str
+    risk_level: str = "normal"
+    consistency_state: str = "ok"
+    sign_count: int = 0
+    issued_count: int = 0
+    pending_recycle_count: int = 0
+    pending_review_count: int = 0
+    active_anomaly_count: int = 0
+    latest_flow_note: str = ""
+
+
 class OverviewStats(BaseModel):
     total_signs: int
     pending_production: int
@@ -245,3 +334,4 @@ class OverviewStats(BaseModel):
     pending_confirm_anomalies: int
     closed_anomalies: int
     recent_anomalies: List[AnomalyResponse]
+    trace_batches: List[TraceBatchItem] = []
