@@ -26,6 +26,13 @@ class GuideSign(Base):
     responsible_person = Column(String(100), nullable=False)
     status = Column(String(20), default="pending_production", index=True)
     remark = Column(Text, default="")
+    trace_code = Column(String(100), index=True, default="")
+    scene_scope = Column(String(20), default="exclusive")
+    risk_level = Column(String(20), default="normal")
+    handover_note = Column(Text, default="")
+    consistency_state = Column(String(20), default="ok")
+    summary_meta = Column(Text, default="")
+    flow_digest = Column(Text, default="")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -72,6 +79,8 @@ class ReviewRecord(Base):
     reviewer = Column(String(100), nullable=False)
     conclusion = Column(String(20), nullable=False)
     reason = Column(Text, default="")
+    summary_meta = Column(Text, default="")
+    review_digest = Column(Text, default="")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     guide_sign = relationship("GuideSign", back_populates="review_records")
@@ -91,6 +100,10 @@ class Anomaly(Base):
     description = Column(Text, default="")
     final_result = Column(Text, default="")
     closed_at = Column(DateTime(timezone=True))
+    trace_code = Column(String(100), index=True, default="")
+    scene_scope = Column(String(20), default="exclusive")
+    risk_level = Column(String(20), default="normal")
+    handover_note = Column(Text, default="")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
