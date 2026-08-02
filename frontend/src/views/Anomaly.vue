@@ -20,6 +20,9 @@
         <el-form-item label="班次">
           <el-input v-model="filterForm.session" placeholder="班次名称" clearable style="width: 140px" />
         </el-form-item>
+        <el-form-item label="追踪码">
+          <el-input v-model="filterForm.trace_code" placeholder="批次追踪码" clearable style="width: 140px" />
+        </el-form-item>
         <el-form-item label="现场负责人">
           <el-input v-model="filterForm.responsible_person" placeholder="现场负责人" clearable style="width: 120px" />
         </el-form-item>
@@ -98,6 +101,14 @@
           </template>
         </el-table-column>
         <el-table-column prop="session" label="班次" width="140" show-overflow-tooltip />
+        <el-table-column label="批次追踪码" width="130">
+          <template #default="{ row }">
+            <span v-if="row.trace_code || row.guide_sign?.trace_code">
+              {{ row.trace_code || row.guide_sign?.trace_code }}
+            </span>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <el-tag :type="getAnomalyStatusType(row.current_status)" size="small">
@@ -113,11 +124,20 @@
             {{ formatDate(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="270" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" size="small" @click="viewDetail(row)">详情</el-button>
             <el-button link type="primary" size="small" @click="openProcessDialog(row)">
               {{ row.current_status === 'closed' ? '重新纳入' : '核查' }}
+            </el-button>
+            <el-button
+              v-if="row.trace_code || row.guide_sign?.trace_code"
+              link
+              type="warning"
+              size="small"
+              @click="openBatchDrawer(row)"
+            >
+              同批次偏差
             </el-button>
           </template>
         </el-table-column>
@@ -136,6 +156,35 @@
             />
           </el-select>
         </el-form-item>
+        <template v-if="selectedRegisterSign">
+          <el-form-item label="批次链路">
+            <div class="trace-snapshot">
+              <el-tag v-if="selectedRegisterSign.trace_code" size="small" type="info">
+                追踪码：{{ selectedRegisterSign.trace_code }}
+              </el-tag>
+              <el-tag v-if="selectedRegisterSign.scene_scope" size="small" :type="getSceneScopeType(selectedRegisterSign.scene_scope)">
+                {{ getSceneScopeLabel(selectedRegisterSign.scene_scope) }}
+              </el-tag>
+              <el-tag v-if="selectedRegisterSign.risk_level" size="small" :type="getRiskLevelType(selectedRegisterSign.risk_level)">
+                {{ getRiskLevelLabel(selectedRegisterSign.risk_level) }}
+              </el-tag>
+              <span v-if="!selectedRegisterSign.trace_code && !selectedRegisterSign.scene_scope && !selectedRegisterSign.risk_level" class="trace-empty">
+                该位标未配置批次链路
+              </span>
+            </div>
+          </el-form-item>
+          <el-form-item v-if="selectedRegisterSign.handover_note" label="交接备注">
+            <div class="trace-handover">{{ selectedRegisterSign.handover_note }}</div>
+          </el-form-item>
+          <el-alert
+            v-if="selectedRegisterSign.scene_scope === 'shared' && selectedRegisterSign.risk_level === 'yellow'"
+            type="warning"
+            show-icon
+            :closable="false"
+            class="register-hint"
+            title="该位标为多人共用链路且黄色风险：核查时建议优先提交复核确认"
+          />
+        </template>
         <el-form-item label="偏差类型" prop="anomaly_type">
           <el-select v-model="registerForm.anomaly_type" placeholder="请选择偏差类型" style="width: 100%">
             <el-option v-for="item in anomalyTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
@@ -180,6 +229,14 @@
         </el-descriptions>
       </div>
       <el-form :model="processForm" :rules="processRules" ref="processFormRef" label-width="90px" style="margin-top: 20px">
+        <el-alert
+          v-if="recommendSubmitConfirm"
+          type="warning"
+          show-icon
+          :closable="false"
+          class="process-hint"
+          title="多人共用链路 + 黄色风险：推荐先提交复核确认"
+        />
         <el-form-item label="核查动作" prop="action">
           <el-select v-model="processForm.action" placeholder="请选择核查动作" style="width: 100%">
             <el-option v-for="action in availableActions" :key="action.value" :label="action.label" :value="action.value" />
@@ -279,6 +336,48 @@
         </el-button>
       </template>
     </el-drawer>
+
+    <el-drawer v-model="batchDrawerVisible" :title="`同批次偏差追查：${batchTraceCode}`" size="640px" direction="rtl">
+      <div v-loading="batchLoading">
+        <el-alert
+          type="info"
+          show-icon
+          :closable="false"
+          class="batch-alert"
+          :title="`追踪码 ${batchTraceCode} 下共 ${batchList.length} 条偏差记录，可用于同源问题排查`"
+        />
+        <el-table :data="batchList" size="small" stripe>
+          <el-table-column prop="id" label="偏差编号" width="90" />
+          <el-table-column label="位标编号" width="120">
+            <template #default="{ row }">{{ row.guide_sign?.sign_number || '-' }}</template>
+          </el-table-column>
+          <el-table-column label="偏差类型" width="100">
+            <template #default="{ row }">
+              <el-tag :type="getAnomalyTypeType(row.anomaly_type)" size="small">
+                {{ getAnomalyTypeLabel(row.anomaly_type) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag :type="getAnomalyStatusType(row.current_status)" size="small">
+                {{ getAnomalyStatusLabel(row.current_status) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="reporter" label="登记人" width="90" />
+          <el-table-column prop="description" label="偏差描述" min-width="140" show-overflow-tooltip />
+          <el-table-column prop="created_at" label="登记时间" width="150">
+            <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="70" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" size="small" @click="viewDetailFromBatch(row)">详情</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -294,6 +393,8 @@ import {
   getAnomalyTypeLabel, getAnomalyTypeType,
   getAnomalyLevelLabel, getAnomalyLevelType,
   getAnomalyActionLabel,
+  getRiskLevelLabel, getRiskLevelType,
+  getSceneScopeLabel, getSceneScopeType,
   ANOMALY_STATUS_MAP, ANOMALY_TYPE_MAP, ANOMALY_LEVEL_MAP
 } from '@/utils/statusMap'
 
@@ -313,7 +414,8 @@ const filterForm = reactive({
   anomaly_level: '',
   session: '',
   responsible_person: '',
-  keyword: ''
+  keyword: '',
+  trace_code: ''
 })
 
 const pendingAnomalyId = ref(null)
@@ -333,6 +435,9 @@ function initFilterFromQuery() {
   }
   if (query.anomaly_type) {
     filterForm.anomaly_type = query.anomaly_type
+  }
+  if (query.trace_code) {
+    filterForm.trace_code = query.trace_code
   }
   if (query.anomaly_id) {
     pendingAnomalyId.value = parseInt(query.anomaly_id)
@@ -392,6 +497,11 @@ const registerRules = {
   responsible_person: [{ required: true, message: '请输入现场负责人', trigger: 'blur' }]
 }
 
+// 登记时选中的位标，用于自动带出批次链路快照信息
+const selectedRegisterSign = computed(() => {
+  return availableSigns.value.find(s => s.id === registerForm.sign_id) || null
+})
+
 const processDialogVisible = ref(false)
 const processFormRef = ref(null)
 const currentAnomaly = ref(null)
@@ -406,6 +516,21 @@ const processRules = {
 }
 
 const detailDrawerVisible = ref(false)
+
+const batchDrawerVisible = ref(false)
+const batchLoading = ref(false)
+const batchList = ref([])
+const batchTraceCode = ref('')
+
+// 多人共用链路 + 黄色风险：推荐先提交复核确认
+const recommendSubmitConfirm = computed(() => {
+  const a = currentAnomaly.value
+  if (!a) return false
+  const scope = a.scene_scope || a.guide_sign?.scene_scope
+  const risk = a.risk_level || a.guide_sign?.risk_level
+  return scope === 'shared' && risk === 'yellow' &&
+    availableActions.value.some(item => item.value === 'submit_confirm')
+})
 
 const availableActions = computed(() => {
   if (!currentAnomaly.value) return []
@@ -472,12 +597,7 @@ async function fetchList() {
 }
 
 function resetFilter() {
-  filterForm.current_status = ''
-  filterForm.anomaly_type = ''
-  filterForm.anomaly_level = ''
-  filterForm.session = ''
-  filterForm.responsible_person = ''
-  filterForm.keyword = ''
+  Object.keys(filterForm).forEach(key => { filterForm[key] = '' })
   fetchList()
 }
 
@@ -522,10 +642,33 @@ async function handleRegister() {
 
 function openProcessDialog(row) {
   currentAnomaly.value = row
-  processForm.action = ''
+  processForm.action = recommendSubmitConfirm.value ? 'submit_confirm' : ''
   processForm.operator = ''
   processForm.remark = ''
   processDialogVisible.value = true
+}
+
+async function openBatchDrawer(row) {
+  const code = row.trace_code || row.guide_sign?.trace_code
+  if (!code) {
+    ElMessage.info('该偏差未关联批次追踪码')
+    return
+  }
+  batchTraceCode.value = code
+  batchDrawerVisible.value = true
+  batchLoading.value = true
+  try {
+    batchList.value = await request.get('/anomalies', { params: { trace_code: code, limit: 200 } })
+  } catch (e) {
+    console.error(e)
+  } finally {
+    batchLoading.value = false
+  }
+}
+
+function viewDetailFromBatch(row) {
+  batchDrawerVisible.value = false
+  viewDetail(row)
 }
 
 async function handleProcess() {
@@ -730,5 +873,39 @@ onMounted(() => {
   padding: 8px 10px;
   background: #f5f7fa;
   border-radius: 4px;
+}
+
+.trace-snapshot {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.trace-empty {
+  color: #909399;
+  font-size: 12px;
+}
+
+.trace-handover {
+  color: #606266;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  background: #f5f7fa;
+  border-radius: 4px;
+  width: 100%;
+}
+
+.register-hint {
+  margin: 0 0 18px 100px;
+}
+
+.process-hint {
+  margin-bottom: 16px;
+}
+
+.batch-alert {
+  margin-bottom: 12px;
 }
 </style>

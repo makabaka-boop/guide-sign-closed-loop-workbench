@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from database import Base, engine, SessionLocal
+from database import Base, engine, SessionLocal, ensure_columns
 from models import *
 from auth import init_default_user
 from routers.auth_router import router as auth_router
@@ -10,6 +10,7 @@ from routers.stats_router import router as stats_router
 from routers.anomaly_router import router as anomaly_router
 
 Base.metadata.create_all(bind=engine)
+ensure_columns()
 
 app = FastAPI(title="试听现场导引位标防错闭环工作台", version="1.0.0")
 

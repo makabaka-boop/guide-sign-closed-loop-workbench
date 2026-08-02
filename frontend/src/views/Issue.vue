@@ -70,7 +70,37 @@
       </el-table>
     </el-card>
 
-    <el-drawer v-model="issueDrawerVisible" title="批量入场投放" size="420px" direction="rtl">
+    <el-drawer v-model="issueDrawerVisible" title="批量入场投放" size="480px" direction="rtl">
+      <div v-if="traceGroups.length" class="trace-group-section">
+        <div class="trace-group-title">批次链路影响范围（{{ traceGroups.length }} 组）</div>
+        <div v-for="group in traceGroups" :key="group.trace_code || '__none__'" class="trace-group-card">
+          <div class="trace-group-header">
+            <span class="trace-group-code">{{ group.trace_code || '未关联批次链路' }}</span>
+            <div class="trace-group-tags">
+              <el-tag v-if="group.scene_scope" :type="getSceneScopeType(group.scene_scope)" size="small">
+                {{ getSceneScopeLabel(group.scene_scope) }}
+              </el-tag>
+              <el-tag v-if="group.risk_level" :type="getRiskLevelType(group.risk_level)" size="small">
+                {{ getRiskLevelLabel(group.risk_level) }}
+              </el-tag>
+            </div>
+          </div>
+          <div class="trace-group-scope">
+            影响范围：{{ group.signs.length }} 枚位标（{{ group.signs.map(s => s.sign_number).join('、') }}）
+          </div>
+          <div class="trace-group-note" :title="group.handover_note">
+            交接备注：{{ group.handover_note || '-' }}
+          </div>
+        </div>
+        <el-alert
+          v-if="hasYellowRisk"
+          type="warning"
+          show-icon
+          :closable="false"
+          class="yellow-risk-alert"
+          title="本次投放包含黄色风险批次：仅提醒不拦截，确认后可继续提交"
+        />
+      </div>
       <el-form :model="issueForm" :rules="issueRules" ref="issueFormRef" label-width="90px">
         <el-form-item label="选中数量">
           <el-tag type="success" size="large">{{ selectedSigns.length }} 张</el-tag>
@@ -107,10 +137,10 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh, Promotion, Warning, CircleCheck } from '@element-plus/icons-vue'
 import request from '@/utils/request'
-import { getStatusLabel, getStatusType, getAnomalyTypeLabel } from '@/utils/statusMap'
+import { getStatusLabel, getStatusType, getAnomalyTypeLabel, getRiskLevelLabel, getRiskLevelType, getSceneScopeLabel, getSceneScopeType } from '@/utils/statusMap'
 
 const loading = ref(false)
 const submitLoading = ref(false)
@@ -125,6 +155,28 @@ const filterForm = reactive({
 
 const availableCount = computed(() => {
   return signList.value.filter(s => s.status === 'available' || s.status === 'restored').length
+})
+
+// 按 trace_code 分组展示本次批量投放的批次链路影响范围
+const traceGroups = computed(() => {
+  const groups = {}
+  selectedSigns.value.forEach(sign => {
+    const key = sign.trace_code || ''
+    if (!groups[key]) {
+      groups[key] = { trace_code: key, signs: [], scene_scope: '', handover_note: '', risk_level: '' }
+    }
+    groups[key].signs.push(sign)
+  })
+  return Object.values(groups).map(group => ({
+    ...group,
+    scene_scope: group.signs.find(s => s.scene_scope)?.scene_scope || '',
+    handover_note: group.signs.find(s => s.handover_note)?.handover_note || '',
+    risk_level: group.signs.find(s => s.risk_level)?.risk_level || ''
+  }))
+})
+
+const hasYellowRisk = computed(() => {
+  return selectedSigns.value.some(s => s.risk_level === 'yellow')
 })
 
 const issueDrawerVisible = ref(false)
@@ -178,7 +230,23 @@ async function handleBatchIssue() {
       ElMessage.warning('请选择要投放的导引位标')
       return
     }
-    
+
+    // 黄色风险只提醒不拦截，确认后仍可继续提交
+    if (hasYellowRisk.value) {
+      const yellowCodes = traceGroups.value
+        .filter(g => g.risk_level === 'yellow')
+        .map(g => g.trace_code || '未关联批次链路')
+      try {
+        await ElMessageBox.confirm(
+          `本次投放涉及黄色风险批次链路（${yellowCodes.join('、')}），黄色风险仅提醒不拦截。确认继续投放？`,
+          '风险提醒',
+          { confirmButtonText: '继续投放', cancelButtonText: '再核对一下', type: 'warning' }
+        )
+      } catch {
+        return
+      }
+    }
+
     submitLoading.value = true
     let successCount = 0
     let failCount = 0
@@ -230,6 +298,64 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   font-weight: 600;
+}
+
+.trace-group-section {
+  margin-bottom: 16px;
+}
+
+.trace-group-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 8px;
+}
+
+.trace-group-card {
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: #fafafa;
+}
+
+.trace-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.trace-group-code {
+  font-weight: 600;
+  color: #303133;
+  font-size: 13px;
+}
+
+.trace-group-tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.trace-group-scope {
+  font-size: 12px;
+  color: #606266;
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+
+.trace-group-note {
+  font-size: 12px;
+  color: #909399;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.yellow-risk-alert {
+  margin-top: 8px;
 }
 
 .issue-action-bar {

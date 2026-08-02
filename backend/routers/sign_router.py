@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
+from datetime import datetime
 
 from database import get_db
 from models import GuideSign, PositionRecord, IssueRecord, ReviewRecord, User, Anomaly
@@ -10,6 +11,7 @@ from schemas import (
     GuideSignCreate, GuideSignUpdate, GuideSignResponse,
     IssueSignRequest, RecycleSignRequest, PositionAdjustRequest, ReviewRequest
 )
+from routers.anomaly_router import append_flow_digest
 
 router = APIRouter(prefix="/api/signs", tags=["导引位标"])
 
@@ -44,6 +46,10 @@ def list_signs(
     applicable_session: Optional[str] = None,
     responsible_person: Optional[str] = None,
     keyword: Optional[str] = None,
+    trace_code: Optional[str] = None,
+    scene_scope: Optional[str] = None,
+    risk_level: Optional[str] = None,
+    consistency_state: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
@@ -64,6 +70,14 @@ def list_signs(
             GuideSign.sign_number.contains(keyword) |
             GuideSign.current_area.contains(keyword)
         )
+    if trace_code:
+        query = query.filter(GuideSign.trace_code.contains(trace_code))
+    if scene_scope:
+        query = query.filter(GuideSign.scene_scope == scene_scope)
+    if risk_level:
+        query = query.filter(GuideSign.risk_level == risk_level)
+    if consistency_state:
+        query = query.filter(GuideSign.consistency_state == consistency_state)
     
     signs = query.order_by(GuideSign.id.desc()).offset(skip).limit(limit).all()
     for sign in signs:
@@ -181,16 +195,26 @@ def issue_sign(
         raise HTTPException(status_code=400, detail="当前状态不可投放")
     
     sign.status = "issued"
-    
+
+    # 投放记录摘要并入批次交接备注
+    remark_summary = request.remark or ""
+    if sign.handover_note:
+        remark_summary = f"{remark_summary}；交接备注：{sign.handover_note}" if remark_summary else f"交接备注：{sign.handover_note}"
+
     issue_record = IssueRecord(
         sign_id=sign.id,
         issue_type="issue",
         session=request.session,
         operator=request.operator,
         receiver=request.receiver,
-        remark=request.remark
+        remark=remark_summary
     )
     db.add(issue_record)
+
+    # 后端维护链路流转摘要，前端无需拼接历史文本
+    digest_segment = f"{datetime.now().strftime('%Y-%m-%d %H:%M')} 投放至{request.session}，接场人{request.receiver}，执行人{request.operator}"
+    sign.flow_digest = f"{sign.flow_digest}；{digest_segment}" if sign.flow_digest else digest_segment
+
     db.commit()
     db.refresh(sign)
     return sign
@@ -290,10 +314,13 @@ def review_sign(
         sign_id=sign.id,
         reviewer=request.reviewer,
         conclusion=request.conclusion,
-        reason=request.reason
+        reason=request.reason,
+        summary_meta=request.summary_meta,
+        review_digest=request.review_digest
     )
     db.add(review_record)
     
+    conclusion_names = {"restore": "复核后可投放", "deactivate": "隔离停用", "reissue": "重新投放"}
     if request.conclusion == "restore":
         sign.status = "restored"
     elif request.conclusion == "deactivate":
@@ -302,6 +329,12 @@ def review_sign(
         sign.status = "available"
     else:
         raise HTTPException(status_code=400, detail="无效的复核判定")
+
+    # 复核结论回写位标链路摘要
+    digest_segment = f"防错复核（{conclusion_names.get(request.conclusion, request.conclusion)}）：{request.reason or '无判定依据'}"
+    if request.review_digest:
+        digest_segment += f"｜复核摘要：{request.review_digest}"
+    append_flow_digest(sign, digest_segment)
     
     db.commit()
     db.refresh(sign)

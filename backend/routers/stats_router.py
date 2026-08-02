@@ -6,7 +6,7 @@ from typing import List
 from database import get_db
 from models import GuideSign, PositionRecord, IssueRecord, User, Anomaly
 from auth import get_current_user
-from schemas import OverviewStats, SessionUsageItem, AreaConflictItem, PersonWorkloadItem
+from schemas import OverviewStats, SessionUsageItem, AreaConflictItem, PersonWorkloadItem, TraceBatchItem
 
 router = APIRouter(prefix="/api/stats", tags=["现场闭环总览"])
 
@@ -73,6 +73,43 @@ def get_overview_stats(
     recent_anomalies = db.query(Anomaly).filter(
         Anomaly.current_status != "closed"
     ).order_by(Anomaly.created_at.desc()).limit(5).all()
+
+    # 批次追踪概览：按 trace_code 聚合同组位标
+    trace_signs = db.query(GuideSign).filter(
+        GuideSign.trace_code.isnot(None),
+        GuideSign.trace_code != ''
+    ).all()
+
+    active_anomaly_rows = db.query(
+        GuideSign.trace_code,
+        func.count(Anomaly.id).label('cnt')
+    ).join(Anomaly, Anomaly.sign_id == GuideSign.id).filter(
+        GuideSign.trace_code.isnot(None),
+        GuideSign.trace_code != '',
+        Anomaly.current_status.in_(["pending", "processing", "pending_confirm"])
+    ).group_by(GuideSign.trace_code).all()
+    active_anomaly_map = {row.trace_code: row.cnt for row in active_anomaly_rows}
+
+    batch_groups = {}
+    for sign in trace_signs:
+        group = batch_groups.setdefault(sign.trace_code, [])
+        group.append(sign)
+
+    trace_batches = []
+    for code, signs in batch_groups.items():
+        latest_sign = max(signs, key=lambda s: (s.updated_at or s.created_at or 0, s.id))
+        trace_batches.append(TraceBatchItem(
+            trace_code=code,
+            risk_level=latest_sign.risk_level or "",
+            consistency_state=latest_sign.consistency_state or "",
+            sign_count=len(signs),
+            issued_count=sum(1 for s in signs if s.status == "issued"),
+            pending_recycle_count=sum(1 for s in signs if s.status == "pending_recycle"),
+            pending_review_count=sum(1 for s in signs if s.status == "pending_review"),
+            active_anomaly_count=active_anomaly_map.get(code, 0),
+            latest_flow_note=latest_sign.handover_note or latest_sign.flow_digest or ""
+        ))
+    trace_batches.sort(key=lambda b: b.trace_code)
     
     return OverviewStats(
         total_signs=total_signs,
@@ -92,5 +129,6 @@ def get_overview_stats(
         processing_anomalies=processing_anomalies,
         pending_confirm_anomalies=pending_confirm_anomalies,
         closed_anomalies=closed_anomalies,
-        recent_anomalies=recent_anomalies
+        recent_anomalies=recent_anomalies,
+        trace_batches=trace_batches
     )
