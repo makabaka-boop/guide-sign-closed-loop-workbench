@@ -40,6 +40,23 @@ export const ANOMALY_ACTION_MAP = {
   add_remark: '补充核查说明'
 }
 
+export const SCENE_SCOPE_MAP = {
+  private: { label: '本批次专用', type: 'info' },
+  shared: { label: '同批次共用链路', type: 'warning' }
+}
+
+export const RISK_LEVEL_MAP = {
+  green: { label: '正常', type: 'success' },
+  yellow: { label: '提醒', type: 'warning' },
+  red: { label: '拦截', type: 'danger' }
+}
+
+export const CONSISTENCY_STATE_MAP = {
+  ok: { label: '一致', type: 'success' },
+  warn: { label: '冲突可继续', type: 'warning' },
+  conflict: { label: '冲突阻断', type: 'danger' }
+}
+
 export function getStatusLabel(status) {
   return STATUS_MAP[status]?.label || status
 }
@@ -74,4 +91,28 @@ export function getAnomalyLevelType(level) {
 
 export function getAnomalyActionLabel(action) {
   return ANOMALY_ACTION_MAP[action] || action
+}
+
+export function getSceneScopeLabel(scope) {
+  return SCENE_SCOPE_MAP[scope]?.label || scope || '-'
+}
+
+export function getSceneScopeType(scope) {
+  return SCENE_SCOPE_MAP[scope]?.type || 'info'
+}
+
+export function getRiskLevelLabel(level) {
+  return RISK_LEVEL_MAP[level]?.label || level || '-'
+}
+
+export function getRiskLevelType(level) {
+  return RISK_LEVEL_MAP[level]?.type || 'info'
+}
+
+export function getConsistencyStateLabel(state) {
+  return CONSISTENCY_STATE_MAP[state]?.label || state || '-'
+}
+
+export function getConsistencyStateType(state) {
+  return CONSISTENCY_STATE_MAP[state]?.type || 'info'
 }

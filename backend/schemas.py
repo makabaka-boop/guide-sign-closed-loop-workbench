@@ -69,6 +69,8 @@ class ReviewRecordBase(BaseModel):
     reviewer: str
     conclusion: str
     reason: str = ""
+    summary_meta: str = ""
+    review_digest: str = ""
 
 
 class ReviewRecordResponse(ReviewRecordBase):
@@ -83,6 +85,13 @@ class ReviewRecordResponse(ReviewRecordBase):
 class GuideSignBase(BaseModel):
     sign_number: str
     batch_code: str = ""
+    trace_code: str = ""
+    scene_scope: str = "private"
+    risk_level: str = "green"
+    handover_note: str = ""
+    consistency_state: str = "ok"
+    summary_meta: str = ""
+    flow_digest: str = ""
     applicable_session: str
     current_area: str
     responsible_person: str
@@ -96,6 +105,13 @@ class GuideSignCreate(GuideSignBase):
 
 class GuideSignUpdate(BaseModel):
     batch_code: Optional[str] = None
+    trace_code: Optional[str] = None
+    scene_scope: Optional[str] = None
+    risk_level: Optional[str] = None
+    handover_note: Optional[str] = None
+    consistency_state: Optional[str] = None
+    summary_meta: Optional[str] = None
+    flow_digest: Optional[str] = None
     applicable_session: Optional[str] = None
     current_area: Optional[str] = None
     responsible_person: Optional[str] = None
@@ -122,6 +138,7 @@ class IssueSignRequest(BaseModel):
     session: str
     operator: str
     remark: str = ""
+    handover_note: str = ""
 
 
 class RecycleSignRequest(BaseModel):
@@ -140,6 +157,8 @@ class ReviewRequest(BaseModel):
     reviewer: str
     conclusion: str
     reason: str = ""
+    summary_meta: str = ""
+    review_digest: str = ""
 
 
 class SessionUsageItem(BaseModel):
@@ -155,6 +174,20 @@ class AreaConflictItem(BaseModel):
 class PersonWorkloadItem(BaseModel):
     person: str
     count: int
+
+
+class TraceBatchItem(BaseModel):
+    trace_code: str
+    risk_level: str = "green"
+    consistency_state: str = "ok"
+    scene_scope: str = "private"
+    total_count: int = 0
+    issued_count: int = 0
+    pending_recycle_count: int = 0
+    pending_review_count: int = 0
+    active_anomaly_count: int = 0
+    latest_flow_note: str = ""
+    latest_flow_at: Optional[datetime] = None
 
 
 class AnomalyFlowRecordBase(BaseModel):
@@ -182,6 +215,10 @@ class AnomalyBase(BaseModel):
     reporter: str
     responsible_person: str
     description: str = ""
+    trace_code: str = ""
+    scene_scope: str = "private"
+    risk_level: str = "green"
+    handover_note: str = ""
 
 
 class AnomalyCreate(AnomalyBase):
@@ -238,6 +275,7 @@ class OverviewStats(BaseModel):
     session_usage: List[SessionUsageItem]
     area_conflicts: List[AreaConflictItem]
     person_workload: List[PersonWorkloadItem]
+    trace_batches: List[TraceBatchItem] = []
     pending_review_list: List[GuideSignResponse]
     total_anomalies: int
     pending_anomalies: int
