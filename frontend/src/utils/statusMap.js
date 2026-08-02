@@ -40,6 +40,26 @@ export const ANOMALY_ACTION_MAP = {
   add_remark: '补充核查说明'
 }
 
+// 批次追踪与位标链路档案：使用场景（scene_scope）
+export const SCENE_SCOPE_MAP = {
+  exclusive: { label: '独立链路', type: 'info' },
+  shared: { label: '批次共用链路', type: 'warning' }
+}
+
+// 批次追踪：风险等级（risk_level），yellow 只提醒不拦截
+export const RISK_LEVEL_MAP = {
+  none: { label: '无风险', type: 'info' },
+  yellow: { label: '黄色提醒', type: 'warning' },
+  red: { label: '红色拦截', type: 'danger' }
+}
+
+// 批次追踪：一致性状态（consistency_state），warn 允许继续流转但需展示冲突提示
+export const CONSISTENCY_STATE_MAP = {
+  normal: { label: '一致', type: 'success' },
+  warn: { label: '冲突提示', type: 'warning' },
+  blocked: { label: '已阻断', type: 'danger' }
+}
+
 export function getStatusLabel(status) {
   return STATUS_MAP[status]?.label || status
 }
@@ -74,4 +94,28 @@ export function getAnomalyLevelType(level) {
 
 export function getAnomalyActionLabel(action) {
   return ANOMALY_ACTION_MAP[action] || action
+}
+
+export function getSceneScopeLabel(scope) {
+  return SCENE_SCOPE_MAP[scope]?.label || scope || '独立链路'
+}
+
+export function getSceneScopeType(scope) {
+  return SCENE_SCOPE_MAP[scope]?.type || 'info'
+}
+
+export function getRiskLevelLabel(level) {
+  return RISK_LEVEL_MAP[level]?.label || level || '无风险'
+}
+
+export function getRiskLevelType(level) {
+  return RISK_LEVEL_MAP[level]?.type || 'info'
+}
+
+export function getConsistencyStateLabel(state) {
+  return CONSISTENCY_STATE_MAP[state]?.label || state || '一致'
+}
+
+export function getConsistencyStateType(state) {
+  return CONSISTENCY_STATE_MAP[state]?.type || 'success'
 }

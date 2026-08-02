@@ -20,6 +20,9 @@
         <el-form-item label="班次">
           <el-input v-model="filterForm.session" placeholder="班次名称" clearable style="width: 140px" />
         </el-form-item>
+        <el-form-item label="批次追踪码">
+          <el-input v-model="filterForm.trace_code" placeholder="按批次追查" clearable style="width: 140px" />
+        </el-form-item>
         <el-form-item label="现场负责人">
           <el-input v-model="filterForm.responsible_person" placeholder="现场负责人" clearable style="width: 120px" />
         </el-form-item>
@@ -98,6 +101,17 @@
           </template>
         </el-table-column>
         <el-table-column prop="session" label="班次" width="140" show-overflow-tooltip />
+        <el-table-column label="批次追踪" width="150">
+          <template #default="{ row }">
+            <div v-if="row.trace_code" class="trace-cell">
+              <el-tag size="small" type="info" class="trace-code-tag" @click="openTraceDrawer(row.trace_code)">
+                {{ row.trace_code }}
+              </el-tag>
+              <el-tag v-if="row.scene_scope === 'shared'" size="small" type="warning">共用</el-tag>
+            </div>
+            <span v-else class="no-trace">-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <el-tag :type="getAnomalyStatusType(row.current_status)" size="small">
@@ -113,11 +127,14 @@
             {{ formatDate(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" size="small" @click="viewDetail(row)">详情</el-button>
             <el-button link type="primary" size="small" @click="openProcessDialog(row)">
               {{ row.current_status === 'closed' ? '重新纳入' : '核查' }}
+            </el-button>
+            <el-button v-if="row.trace_code" link type="warning" size="small" @click="openTraceDrawer(row.trace_code)">
+              同批次偏差
             </el-button>
           </template>
         </el-table-column>
@@ -127,7 +144,7 @@
     <el-dialog v-model="registerDialogVisible" title="登记现场偏差" width="560px">
       <el-form :model="registerForm" :rules="registerRules" ref="registerFormRef" label-width="100px">
         <el-form-item label="导引位标" prop="sign_id">
-          <el-select v-model="registerForm.sign_id" filterable placeholder="请选择导引位标" style="width: 100%">
+          <el-select v-model="registerForm.sign_id" filterable placeholder="请选择导引位标" style="width: 100%" @change="handleSignChange">
             <el-option
               v-for="sign in availableSigns"
               :key="sign.id"
@@ -135,6 +152,27 @@
               :value="sign.id"
             />
           </el-select>
+        </el-form-item>
+        <el-form-item label="批次链路" v-if="selectedSignInfo">
+          <div class="sign-trace-info">
+            <div class="trace-tags-row">
+              <el-tag size="small" type="info">追踪码：{{ selectedSignInfo.trace_code || '未关联' }}</el-tag>
+              <el-tag size="small" :type="getSceneScopeType(selectedSignInfo.scene_scope)">{{ getSceneScopeLabel(selectedSignInfo.scene_scope) }}</el-tag>
+              <el-tag size="small" :type="getRiskLevelType(selectedSignInfo.risk_level)">{{ getRiskLevelLabel(selectedSignInfo.risk_level) }}</el-tag>
+            </div>
+            <div class="handover-note" v-if="selectedSignInfo.handover_note">
+              <el-icon><ChatLineSquare /></el-icon>
+              <span>交接备注：{{ selectedSignInfo.handover_note }}</span>
+            </div>
+            <el-alert
+              v-if="isSharedYellow"
+              title="共享链路 + 黄色风险：建议核查时先提交复核确认，避免影响同批次其他位标"
+              type="warning"
+              :closable="false"
+              show-icon
+              class="shared-yellow-alert"
+            />
+          </div>
         </el-form-item>
         <el-form-item label="偏差类型" prop="anomaly_type">
           <el-select v-model="registerForm.anomaly_type" placeholder="请选择偏差类型" style="width: 100%">
@@ -176,8 +214,24 @@
           </el-descriptions-item>
           <el-descriptions-item label="导引位标">{{ currentAnomaly.guide_sign?.sign_number }}</el-descriptions-item>
           <el-descriptions-item label="偏差类型">{{ getAnomalyTypeLabel(currentAnomaly.anomaly_type) }}</el-descriptions-item>
-          <el-descriptions-item label="现场负责人" :span="2">{{ currentAnomaly.responsible_person }}</el-descriptions-item>
+          <el-descriptions-item label="批次追踪码">{{ currentAnomaly.trace_code || '未关联' }}</el-descriptions-item>
+          <el-descriptions-item label="使用场景">
+            <el-tag :type="getSceneScopeType(currentAnomaly.scene_scope)" size="small">{{ getSceneScopeLabel(currentAnomaly.scene_scope) }}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="风险等级">
+            <el-tag :type="getRiskLevelType(currentAnomaly.risk_level)" size="small">{{ getRiskLevelLabel(currentAnomaly.risk_level) }}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="现场负责人">{{ currentAnomaly.responsible_person }}</el-descriptions-item>
+          <el-descriptions-item label="交接备注" :span="2" v-if="currentAnomaly.handover_note">{{ currentAnomaly.handover_note }}</el-descriptions-item>
         </el-descriptions>
+        <el-alert
+          v-if="currentAnomalySharedYellow"
+          title="共享链路 + 黄色风险：已默认推荐“提交复核确认”，请优先复核以保障同批次一致性"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="shared-yellow-alert"
+        />
       </div>
       <el-form :model="processForm" :rules="processRules" ref="processFormRef" label-width="90px" style="margin-top: 20px">
         <el-form-item label="核查动作" prop="action">
@@ -279,6 +333,53 @@
         </el-button>
       </template>
     </el-drawer>
+
+    <el-drawer v-model="traceDrawerVisible" title="同批次偏差追查" size="640px" direction="rtl">
+      <div v-loading="traceLoading" class="trace-drawer">
+        <div class="trace-drawer-head">
+          <el-tag type="info" size="large">追踪码：{{ traceCode }}</el-tag>
+          <el-tag type="warning">共 {{ traceAnomalies.length }} 条同批次偏差</el-tag>
+        </div>
+
+        <div class="trace-summary">
+          <div class="summary-item">
+            <span class="summary-label">未闭环</span>
+            <span class="summary-value is-alert">{{ traceOpenCount }}</span>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">已核销</span>
+            <span class="summary-value">{{ traceClosedCount }}</span>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">涉及位标</span>
+            <span class="summary-value">{{ traceSignCount }}</span>
+          </div>
+        </div>
+
+        <el-table :data="traceAnomalies" size="small" stripe>
+          <el-table-column prop="id" label="编号" width="70" />
+          <el-table-column label="位标" width="130">
+            <template #default="{ row }">{{ row.guide_sign?.sign_number || '-' }}</template>
+          </el-table-column>
+          <el-table-column label="类型" width="100">
+            <template #default="{ row }">
+              <el-tag :type="getAnomalyTypeType(row.anomaly_type)" size="small">{{ getAnomalyTypeLabel(row.anomaly_type) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag :type="getAnomalyStatusType(row.current_status)" size="small">{{ getAnomalyStatusLabel(row.current_status) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="description" label="偏差描述" min-width="140" show-overflow-tooltip />
+          <el-table-column label="操作" width="80" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" size="small" @click="viewDetailFromTrace(row)">详情</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -286,7 +387,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, Plus, ArrowRight } from '@element-plus/icons-vue'
+import { Search, Refresh, Plus, ArrowRight, ChatLineSquare } from '@element-plus/icons-vue'
 import request from '@/utils/request'
 import {
   getStatusLabel, getStatusType,
@@ -294,6 +395,8 @@ import {
   getAnomalyTypeLabel, getAnomalyTypeType,
   getAnomalyLevelLabel, getAnomalyLevelType,
   getAnomalyActionLabel,
+  getSceneScopeLabel, getSceneScopeType,
+  getRiskLevelLabel, getRiskLevelType,
   ANOMALY_STATUS_MAP, ANOMALY_TYPE_MAP, ANOMALY_LEVEL_MAP
 } from '@/utils/statusMap'
 
@@ -312,6 +415,7 @@ const filterForm = reactive({
   anomaly_type: '',
   anomaly_level: '',
   session: '',
+  trace_code: '',
   responsible_person: '',
   keyword: ''
 })
@@ -333,6 +437,9 @@ function initFilterFromQuery() {
   }
   if (query.anomaly_type) {
     filterForm.anomaly_type = query.anomaly_type
+  }
+  if (query.trace_code) {
+    filterForm.trace_code = query.trace_code
   }
   if (query.anomaly_id) {
     pendingAnomalyId.value = parseInt(query.anomaly_id)
@@ -407,6 +514,67 @@ const processRules = {
 
 const detailDrawerVisible = ref(false)
 
+// 登记弹窗：当前选中位标信息（自动带出 scene_scope/risk_level/handover_note）
+const selectedSignInfo = computed(() => {
+  if (!registerForm.sign_id) return null
+  return availableSigns.value.find(s => s.id === registerForm.sign_id) || null
+})
+
+const isSharedYellow = computed(() => {
+  const s = selectedSignInfo.value
+  return !!s && s.scene_scope === 'shared' && s.risk_level === 'yellow'
+})
+
+// 核查弹窗：当前偏差是否为共享链路+黄色风险
+const currentAnomalySharedYellow = computed(() => {
+  const a = currentAnomaly.value
+  return !!a && a.scene_scope === 'shared' && a.risk_level === 'yellow'
+})
+
+// 同批次偏差抽屉
+const traceDrawerVisible = ref(false)
+const traceLoading = ref(false)
+const traceCode = ref('')
+const traceAnomalies = ref([])
+
+const traceOpenCount = computed(() =>
+  traceAnomalies.value.filter(a => a.current_status !== 'closed').length
+)
+const traceClosedCount = computed(() =>
+  traceAnomalies.value.filter(a => a.current_status === 'closed').length
+)
+const traceSignCount = computed(() =>
+  new Set(traceAnomalies.value.map(a => a.sign_id)).size
+)
+
+function handleSignChange() {
+  // 选中位标后自动带出班次，其余批次信息通过 selectedSignInfo 展示
+  const s = selectedSignInfo.value
+  if (s && !registerForm.session) {
+    registerForm.session = s.applicable_session || ''
+  }
+}
+
+async function openTraceDrawer(code) {
+  if (!code) return
+  traceCode.value = code
+  traceDrawerVisible.value = true
+  traceLoading.value = true
+  try {
+    traceAnomalies.value = await request.get('/anomalies', { params: { trace_code: code, limit: 200 } })
+  } catch (e) {
+    console.error(e)
+    traceAnomalies.value = []
+  } finally {
+    traceLoading.value = false
+  }
+}
+
+function viewDetailFromTrace(row) {
+  traceDrawerVisible.value = false
+  viewDetail(row)
+}
+
 const availableActions = computed(() => {
   if (!currentAnomaly.value) return []
   const status = currentAnomaly.value.current_status
@@ -476,6 +644,7 @@ function resetFilter() {
   filterForm.anomaly_type = ''
   filterForm.anomaly_level = ''
   filterForm.session = ''
+  filterForm.trace_code = ''
   filterForm.responsible_person = ''
   filterForm.keyword = ''
   fetchList()
@@ -525,6 +694,12 @@ function openProcessDialog(row) {
   processForm.action = ''
   processForm.operator = ''
   processForm.remark = ''
+  // 共享链路+黄色风险：核查动作默认推荐先提交复核确认（仅在该动作可选时）
+  if (row.scene_scope === 'shared' && row.risk_level === 'yellow') {
+    if (row.current_status === 'processing') {
+      processForm.action = 'submit_confirm'
+    }
+  }
   processDialogVisible.value = true
 }
 
@@ -731,4 +906,87 @@ onMounted(() => {
   background: #f5f7fa;
   border-radius: 4px;
 }
+
+.trace-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.trace-code-tag {
+  cursor: pointer;
+}
+
+.no-trace {
+  color: #c0c4cc;
+}
+
+.sign-trace-info {
+  width: 100%;
+}
+
+.trace-tags-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.handover-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 13px;
+  color: #606266;
+  margin-bottom: 8px;
+}
+
+.shared-yellow-alert {
+  margin-top: 8px;
+}
+
+.trace-drawer {
+  padding: 6px 0;
+}
+
+.trace-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.trace-summary {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.trace-summary .summary-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px;
+  background: #f5f7fa;
+  border-radius: 8px;
+}
+
+.summary-label {
+  font-size: 12px;
+  color: #909399;
+}
+
+.summary-value {
+  font-size: 20px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.summary-value.is-alert {
+  color: #f56c6c;
+}
+
 </style>

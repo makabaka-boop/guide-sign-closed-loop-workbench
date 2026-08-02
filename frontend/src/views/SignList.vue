@@ -10,6 +10,24 @@
         <el-form-item label="批次">
           <el-input v-model="filterForm.batch_code" placeholder="批次编号" clearable style="width: 140px" />
         </el-form-item>
+        <el-form-item label="追踪码">
+          <el-input v-model="filterForm.trace_code" placeholder="批次追踪码" clearable style="width: 140px" />
+        </el-form-item>
+        <el-form-item label="使用场景">
+          <el-select v-model="filterForm.scene_scope" placeholder="全部场景" clearable style="width: 140px">
+            <el-option v-for="(item, key) in SCENE_SCOPE_MAP" :key="key" :label="item.label" :value="key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="风险等级">
+          <el-select v-model="filterForm.risk_level" placeholder="全部风险" clearable style="width: 140px">
+            <el-option v-for="(item, key) in RISK_LEVEL_MAP" :key="key" :label="item.label" :value="key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="一致性">
+          <el-select v-model="filterForm.consistency_state" placeholder="全部一致性" clearable style="width: 140px">
+            <el-option v-for="(item, key) in CONSISTENCY_STATE_MAP" :key="key" :label="item.label" :value="key" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="试听班次">
           <el-input v-model="filterForm.applicable_session" placeholder="班次" clearable style="width: 140px" />
         </el-form-item>
@@ -51,6 +69,37 @@
           </template>
         </el-table-column>
         <el-table-column prop="batch_code" label="批次编号" width="120" />
+        <el-table-column prop="trace_code" label="追踪码" width="120">
+          <template #default="{ row }">
+            <span>{{ row.trace_code || '-' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="使用场景" width="120">
+          <template #default="{ row }">
+            <el-tag :type="getSceneScopeType(row.scene_scope)" size="small">{{ getSceneScopeLabel(row.scene_scope) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="风险等级" width="110">
+          <template #default="{ row }">
+            <el-tag :type="getRiskLevelType(row.risk_level)" size="small">{{ getRiskLevelLabel(row.risk_level) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="一致性" width="120">
+          <template #default="{ row }">
+            <el-tooltip
+              v-if="row.consistency_state === 'warn'"
+              content="存在批次链路冲突，允许继续流转但请核对交接说明"
+              placement="top"
+            >
+              <el-tag :type="getConsistencyStateType(row.consistency_state)" size="small">
+                {{ getConsistencyStateLabel(row.consistency_state) }}
+              </el-tag>
+            </el-tooltip>
+            <el-tag v-else :type="getConsistencyStateType(row.consistency_state)" size="small">
+              {{ getConsistencyStateLabel(row.consistency_state) }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="applicable_session" label="试听班次" width="140" />
         <el-table-column prop="current_area" label="目标座区" width="140" />
         <el-table-column prop="responsible_person" label="现场负责人" width="120" />
@@ -105,6 +154,22 @@
         <el-form-item label="批次编号" prop="batch_code">
           <el-input v-model="createForm.batch_code" placeholder="请输入批次编号" />
         </el-form-item>
+        <el-form-item label="批次追踪码" prop="trace_code">
+          <el-input v-model="createForm.trace_code" placeholder="同批次共用链路可填写相同追踪码" />
+        </el-form-item>
+        <el-form-item label="使用场景" prop="scene_scope">
+          <el-select v-model="createForm.scene_scope" style="width: 100%">
+            <el-option v-for="(item, key) in SCENE_SCOPE_MAP" :key="key" :label="item.label" :value="key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="风险等级" prop="risk_level">
+          <el-select v-model="createForm.risk_level" style="width: 100%">
+            <el-option v-for="(item, key) in RISK_LEVEL_MAP" :key="key" :label="item.label" :value="key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="交接说明" prop="handover_note">
+          <el-input v-model="createForm.handover_note" type="textarea" :rows="2" placeholder="批次交接备注，可选" />
+        </el-form-item>
         <el-form-item label="试听班次" prop="applicable_session">
           <el-input v-model="createForm.applicable_session" placeholder="如：2024春季班" />
         </el-form-item>
@@ -134,14 +199,44 @@
       <el-descriptions :column="2" border v-if="currentSign">
         <el-descriptions-item label="位标编号">{{ currentSign.sign_number }}</el-descriptions-item>
         <el-descriptions-item label="批次编号">{{ currentSign.batch_code || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="批次追踪码">{{ currentSign.trace_code || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="使用场景">
+          <el-tag :type="getSceneScopeType(currentSign.scene_scope)" size="small">{{ getSceneScopeLabel(currentSign.scene_scope) }}</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="风险等级">
+          <el-tag :type="getRiskLevelType(currentSign.risk_level)" size="small">{{ getRiskLevelLabel(currentSign.risk_level) }}</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="一致性状态">
+          <el-tag :type="getConsistencyStateType(currentSign.consistency_state)" size="small">{{ getConsistencyStateLabel(currentSign.consistency_state) }}</el-tag>
+        </el-descriptions-item>
         <el-descriptions-item label="试听班次">{{ currentSign.applicable_session }}</el-descriptions-item>
         <el-descriptions-item label="当前座区">{{ currentSign.current_area }}</el-descriptions-item>
         <el-descriptions-item label="现场负责人">{{ currentSign.responsible_person }}</el-descriptions-item>
         <el-descriptions-item label="状态">
           <el-tag :type="getStatusType(currentSign.status)">{{ getStatusLabel(currentSign.status) }}</el-tag>
         </el-descriptions-item>
+        <el-descriptions-item label="交接说明" :span="2">{{ currentSign.handover_note || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="链路摘要" :span="2">{{ currentSign.summary_meta || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="流转摘要" :span="2">{{ currentSign.flow_digest || '-' }}</el-descriptions-item>
         <el-descriptions-item label="备注" :span="2">{{ currentSign.remark || '-' }}</el-descriptions-item>
       </el-descriptions>
+
+      <el-alert
+        v-if="currentSign && currentSign.consistency_state === 'warn'"
+        title="该位标存在批次链路冲突：允许继续流转，但请核对交接说明后再操作"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-top: 12px"
+      />
+      <el-alert
+        v-else-if="currentSign && currentSign.risk_level === 'yellow'"
+        title="黄色风险提醒：仅提示不拦截，请留意批次链路状态"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-top: 12px"
+      />
 
       <el-tabs v-model="activeTab" class="detail-tabs" v-if="currentSign">
         <el-tab-pane label="座区校准轨迹" name="position">
@@ -218,6 +313,27 @@
         <el-form-item label="批次编号">
           <el-input v-model="editForm.batch_code" />
         </el-form-item>
+        <el-form-item label="批次追踪码">
+          <el-input v-model="editForm.trace_code" placeholder="同批次共用链路可填写相同追踪码" />
+        </el-form-item>
+        <el-form-item label="使用场景">
+          <el-select v-model="editForm.scene_scope" style="width: 100%">
+            <el-option v-for="(item, key) in SCENE_SCOPE_MAP" :key="key" :label="item.label" :value="key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="风险等级">
+          <el-select v-model="editForm.risk_level" style="width: 100%">
+            <el-option v-for="(item, key) in RISK_LEVEL_MAP" :key="key" :label="item.label" :value="key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="一致性状态">
+          <el-select v-model="editForm.consistency_state" style="width: 100%">
+            <el-option v-for="(item, key) in CONSISTENCY_STATE_MAP" :key="key" :label="item.label" :value="key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="交接说明">
+          <el-input v-model="editForm.handover_note" type="textarea" :rows="2" />
+        </el-form-item>
         <el-form-item label="试听班次" prop="applicable_session">
           <el-input v-model="editForm.applicable_session" />
         </el-form-item>
@@ -241,19 +357,29 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Search, Refresh, Plus, Warning, CircleCheck } from '@element-plus/icons-vue'
 import request from '@/utils/request'
-import { STATUS_MAP, getStatusLabel, getStatusType, getAnomalyTypeLabel } from '@/utils/statusMap'
+import { STATUS_MAP, getStatusLabel, getStatusType, getAnomalyTypeLabel,
+  SCENE_SCOPE_MAP, RISK_LEVEL_MAP, CONSISTENCY_STATE_MAP,
+  getSceneScopeLabel, getSceneScopeType,
+  getRiskLevelLabel, getRiskLevelType,
+  getConsistencyStateLabel, getConsistencyStateType } from '@/utils/statusMap'
 
 const loading = ref(false)
 const submitLoading = ref(false)
 const signList = ref([])
 const currentSign = ref(null)
+const route = useRoute()
 
 const filterForm = reactive({
   status: '',
   batch_code: '',
+  trace_code: '',
+  scene_scope: '',
+  risk_level: '',
+  consistency_state: '',
   applicable_session: '',
   responsible_person: '',
   keyword: ''
@@ -264,6 +390,10 @@ const createFormRef = ref(null)
 const createForm = reactive({
   sign_number: '',
   batch_code: '',
+  trace_code: '',
+  scene_scope: 'exclusive',
+  risk_level: 'none',
+  handover_note: '',
   applicable_session: '',
   current_area: '',
   responsible_person: '',
@@ -298,6 +428,11 @@ const editForm = reactive({
   id: null,
   sign_number: '',
   batch_code: '',
+  trace_code: '',
+  scene_scope: 'exclusive',
+  risk_level: 'none',
+  consistency_state: 'normal',
+  handover_note: '',
   applicable_session: '',
   current_area: '',
   responsible_person: '',
@@ -327,6 +462,10 @@ async function fetchList() {
 function resetFilter() {
   filterForm.status = ''
   filterForm.batch_code = ''
+  filterForm.trace_code = ''
+  filterForm.scene_scope = ''
+  filterForm.risk_level = ''
+  filterForm.consistency_state = ''
   filterForm.applicable_session = ''
   filterForm.responsible_person = ''
   filterForm.keyword = ''
@@ -338,6 +477,10 @@ function openCreateDialog() {
   Object.assign(createForm, {
     sign_number: '',
     batch_code: '',
+    trace_code: '',
+    scene_scope: 'exclusive',
+    risk_level: 'none',
+    handover_note: '',
     applicable_session: '',
     current_area: '',
     responsible_person: '',
@@ -393,6 +536,11 @@ function openEditDialog(row) {
   editForm.id = row.id
   editForm.sign_number = row.sign_number
   editForm.batch_code = row.batch_code
+  editForm.trace_code = row.trace_code || ''
+  editForm.scene_scope = row.scene_scope || 'exclusive'
+  editForm.risk_level = row.risk_level || 'none'
+  editForm.consistency_state = row.consistency_state || 'normal'
+  editForm.handover_note = row.handover_note || ''
   editForm.applicable_session = row.applicable_session
   editForm.current_area = row.current_area
   editForm.responsible_person = row.responsible_person
@@ -406,6 +554,11 @@ async function handleEdit() {
     submitLoading.value = true
     await request.put(`/signs/${editForm.id}`, {
       batch_code: editForm.batch_code,
+      trace_code: editForm.trace_code,
+      scene_scope: editForm.scene_scope,
+      risk_level: editForm.risk_level,
+      consistency_state: editForm.consistency_state,
+      handover_note: editForm.handover_note,
       applicable_session: editForm.applicable_session,
       current_area: editForm.current_area,
       responsible_person: editForm.responsible_person,
@@ -442,6 +595,13 @@ async function handleMarkAvailable(row) {
 }
 
 onMounted(() => {
+  // 支持从批次追踪概览等页面跳转时携带筛选条件
+  const query = route.query || {}
+  Object.keys(filterForm).forEach(key => {
+    if (query[key] !== undefined && query[key] !== null) {
+      filterForm[key] = String(query[key])
+    }
+  })
   fetchList()
 })
 </script>

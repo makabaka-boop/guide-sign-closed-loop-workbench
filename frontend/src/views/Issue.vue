@@ -70,7 +70,7 @@
       </el-table>
     </el-card>
 
-    <el-drawer v-model="issueDrawerVisible" title="批量入场投放" size="420px" direction="rtl">
+    <el-drawer v-model="issueDrawerVisible" title="批量入场投放" size="480px" direction="rtl">
       <el-form :model="issueForm" :rules="issueRules" ref="issueFormRef" label-width="90px">
         <el-form-item label="选中数量">
           <el-tag type="success" size="large">{{ selectedSigns.length }} 张</el-tag>
@@ -88,6 +88,49 @@
           <el-input v-model="issueForm.remark" type="textarea" :rows="3" placeholder="可选" />
         </el-form-item>
       </el-form>
+
+      <el-alert
+        v-if="hasYellowRisk"
+        title="本次投放存在黄色风险位标：可继续提交，但请确认交接链路后再投放"
+        type="warning"
+        :closable="false"
+        show-icon
+        class="risk-alert"
+      />
+
+      <div class="trace-review">
+        <div class="trace-review-title">同批次链路核对</div>
+        <div v-for="group in traceGroups" :key="group.trace_code" class="trace-group">
+          <div class="trace-group-head">
+            <span class="trace-group-code">
+              <el-icon><Connection /></el-icon>
+              {{ group.is_untraced ? '未关联批次链路' : group.trace_code }}
+            </span>
+            <div class="trace-group-tags">
+              <el-tag v-if="group.shared" type="warning" size="small">批次共用链路</el-tag>
+              <el-tag :type="getRiskLevelType(group.risk_level)" size="small">{{ getRiskLevelLabel(group.risk_level) }}</el-tag>
+              <el-tag type="info" size="small">影响 {{ group.signs.length }} 枚</el-tag>
+            </div>
+          </div>
+          <div class="trace-group-signs">
+            <el-tag
+              v-for="s in group.signs"
+              :key="s.id"
+              size="small"
+              :type="s.risk_level === 'yellow' ? 'warning' : 'info'"
+              effect="plain"
+              class="trace-sign-tag"
+            >
+              {{ s.sign_number }}
+            </el-tag>
+          </div>
+          <div v-if="group.handover_note" class="trace-group-note">
+            <el-icon><ChatLineSquare /></el-icon>
+            <span>{{ group.handover_note }}</span>
+          </div>
+        </div>
+      </div>
+
       <template #footer>
         <el-button @click="issueDrawerVisible = false">取消</el-button>
         <el-button type="primary" @click="handleBatchIssue" :loading="submitLoading">
@@ -107,10 +150,10 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Search, Refresh, Promotion, Warning, CircleCheck } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search, Refresh, Promotion, Warning, CircleCheck, Connection, ChatLineSquare } from '@element-plus/icons-vue'
 import request from '@/utils/request'
-import { getStatusLabel, getStatusType, getAnomalyTypeLabel } from '@/utils/statusMap'
+import { getStatusLabel, getStatusType, getAnomalyTypeLabel, getRiskLevelLabel, getRiskLevelType } from '@/utils/statusMap'
 
 const loading = ref(false)
 const submitLoading = ref(false)
@@ -125,6 +168,40 @@ const filterForm = reactive({
 
 const availableCount = computed(() => {
   return signList.value.filter(s => s.status === 'available' || s.status === 'restored').length
+})
+
+// 按 trace_code 分组展示本次投放影响范围、共享链路标识、交接备注和风险等级
+const traceGroups = computed(() => {
+  const map = new Map()
+  for (const sign of selectedSigns.value) {
+    const key = sign.trace_code || '__untraced__'
+    if (!map.has(key)) {
+      map.set(key, {
+        trace_code: key,
+        is_untraced: !sign.trace_code,
+        signs: [],
+        shared: false,
+        risk_level: 'none',
+        handover_note: ''
+      })
+    }
+    const group = map.get(key)
+    group.signs.push(sign)
+    if (sign.scene_scope === 'shared') group.shared = true
+    // 组内风险取最高：red > yellow > none
+    if (sign.risk_level === 'red') {
+      group.risk_level = 'red'
+    } else if (sign.risk_level === 'yellow' && group.risk_level !== 'red') {
+      group.risk_level = 'yellow'
+    }
+    // 交接备注取组内首个非空值
+    if (!group.handover_note && sign.handover_note) group.handover_note = sign.handover_note
+  }
+  return Array.from(map.values())
+})
+
+const hasYellowRisk = computed(() => {
+  return selectedSigns.value.some(s => s.risk_level === 'yellow')
 })
 
 const issueDrawerVisible = ref(false)
@@ -178,7 +255,20 @@ async function handleBatchIssue() {
       ElMessage.warning('请选择要投放的导引位标')
       return
     }
-    
+
+    // risk_level=yellow 只提醒不拦截：弹出确认后仍可提交
+    if (hasYellowRisk.value) {
+      try {
+        await ElMessageBox.confirm(
+          '本次投放包含黄色风险位标，请确认交接链路无误后继续投放。',
+          '黄色风险提醒',
+          { confirmButtonText: '仍然投放', cancelButtonText: '再核对一下', type: 'warning' }
+        )
+      } catch {
+        return
+      }
+    }
+
     submitLoading.value = true
     let successCount = 0
     let failCount = 0
@@ -278,4 +368,73 @@ onMounted(() => {
   color: #67c23a;
   font-size: 13px;
 }
+
+.risk-alert {
+  margin-bottom: 16px;
+}
+
+.trace-review {
+  margin-top: 8px;
+}
+
+.trace-review-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: #303133;
+  margin-bottom: 12px;
+}
+
+.trace-group {
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+  background: #fafafa;
+}
+
+.trace-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.trace-group-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  color: #303133;
+  font-size: 13px;
+}
+
+.trace-group-tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.trace-group-signs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.trace-sign-tag {
+  margin: 0;
+}
+
+.trace-group-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  color: #606266;
+  border-top: 1px dashed #dcdfe6;
+  padding-top: 8px;
+}
+
 </style>
